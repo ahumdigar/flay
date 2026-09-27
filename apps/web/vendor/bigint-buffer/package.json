@@ -1,0 +1,13 @@
+{
+  "name": "bigint-buffer",
+  "version": "1.1.6",
+  "description": "Pure JavaScript bigint-buffer compatibility module with bounded conversion",
+  "private": true,
+  "main": "index.cjs",
+  "browser": "index.cjs",
+  "types": "index.d.ts",
+  "license": "MIT",
+  "engines": {
+    "node": ">=20"
+  }
+}

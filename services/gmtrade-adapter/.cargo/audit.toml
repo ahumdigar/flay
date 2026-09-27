@@ -1,0 +1,12 @@
+[advisories]
+# Reviewed for the hackathon boundary in ../../apps/web/ADVISORY_REVIEW.md.
+# All six enter through the plan-pinned gmsol-sdk 0.10 / Solana 2.1 graph.
+# Re-run without this list when upgrading that venue stack for public production.
+ignore = [
+  "RUSTSEC-2024-0344",
+  "RUSTSEC-2022-0093",
+  "RUSTSEC-2026-0258",
+  "RUSTSEC-2026-0098",
+  "RUSTSEC-2026-0099",
+  "RUSTSEC-2026-0104",
+]

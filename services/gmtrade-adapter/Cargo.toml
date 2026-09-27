@@ -1,0 +1,33 @@
+[package]
+name = "flay-gmtrade-adapter"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+anyhow = "1.0"
+base64 = "0.22"
+bincode = "1.3"
+futures-util = "0.3"
+gmsol-sdk = { version = "=0.10.0", default-features = false, features = ["client", "decode", "serde", "simulation"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+sha2 = "0.10"
+tokio = { version = "1.47", features = ["macros", "rt-multi-thread", "io-std", "io-util", "time"] }
+
+[profile.dev]
+debug = 0
+incremental = false
+codegen-units = 256
+
+[profile.test]
+debug = 0
+incremental = false
+codegen-units = 256
+
+[profile.release]
+lto = false
+codegen-units = 16
+opt-level = 2
+strip = true
