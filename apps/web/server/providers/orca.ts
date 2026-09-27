@@ -1,4 +1,3 @@
-import { BN } from '@coral-xyz/anchor';
 import { Percentage } from '@orca-so/common-sdk';
 import {
   PriceMath,
@@ -12,6 +11,7 @@ import {
   VersionedTransaction,
   type Signer,
 } from '@solana/web3.js';
+import BN from 'bn.js';
 import { QUOTE_TTL_MS } from '../../shared/constants.js';
 import type { ProviderQuoteResult } from '../domain.js';
 import { config } from '../config.js';
