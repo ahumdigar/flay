@@ -258,7 +258,7 @@ All five acceptance criteria and all six plan items pass. Confirmed Agent market
 
 ## Active plan: User-selectable Agent approval mode
 
-**Status:** implementation in progress
+**Status:** repository implementation verified; production activation pending
 
 **Scope:** let each Agent capability use either `Always ask`, where the user reviews and signs every request in Flay, or `Automatic within guardrails`, where a one-time Privy wallet delegation lets Flay execute the agent's supported trading intents without another UI visit
 
@@ -295,3 +295,27 @@ Flay must apply the same product, asset, market, USD, rolling daily, slippage, l
 10. No existing Convert, xStocks, Futures, Funds, wallet, MagicBlock, gasless, `Always ask`, or MCP discovery behavior regresses, and all required repository checks pass.
 
 Do not mark this block complete until all ten implementation items and all ten acceptance criteria are evidenced in a final plan-versus-code audit below this plan.
+
+## User-selectable Agent approval mode audit
+
+**Status:** repository implementation verified; production Full access activation pending
+**Date:** 2026-09-28
+
+### Plan-to-code comparison
+
+1. **Contracts and schemas — pass.** Shared policy, credential, request, execution, and workspace contracts now carry immutable `always-ask | automatic` state. The strict Zod boundary defaults omitted modes to `always-ask`, accepts only the two declared values, and rejects hidden fields such as a fiat grant.
+2. **Privy signer boundary — pass.** `server/agent/delegated-signer.ts` creates the Node client only when the app ID, app secret, and authorization private key are present. It resolves the authenticated user's delegated embedded Solana wallet and rechecks its ID, address, and chain before each sign or sponsored sign-and-send call. No public signing route was added.
+3. **Private delegated identity — pass.** The Privy wallet ID exists only in the private credential record. Public credential creation, workspace state, REST/MCP results, and audit events omit it. Automatic credential creation fails when the server signer or exact wallet delegation is unavailable.
+4. **Automatic controller — pass.** `AgentService.submit` reuses the existing risk calculation, allowlists, rolling value limits, best-executable Convert fallback, xStocks quote path, Futures aggregator, prepared transaction validation, provider execution, receipt verification, and completion audit. In-flight executions are coalesced, completed calls are replay-safe, retryable failures retain one request, and pending Futures opens reserve the position cap across concurrent capabilities.
+5. **Both transaction shapes — pass.** Normal Jupiter, xStocks, and Futures actions use Privy server signing followed by the existing executor. Eligible reviewed Raydium/Orca transactions use Privy's atomic sponsored sign-and-send followed by the existing sponsored receipt verifier. The preparation services still perform their established semantic checks and simulations.
+6. **Truthful REST and MCP results — pass.** Both surfaces return `humanApprovalRequired`, `fundsMoved`, the owner-selected mode, current state, failure, and execution evidence. `fundsMoved` becomes true only for a completed request with an execution result. MCP trade annotations now correctly describe idempotent, state-changing calls.
+7. **Owner UI and revocation — pass.** Agent access presents `Always ask` and `Full access`, requests visible Privy delegation before automatic credential creation, labels each credential's immutable mode, keeps automatic results out of the manual queue, polls and reconciles completions, and revokes all active automatic Flay credentials before calling Privy's wallet-delegation revocation. Revocation stops new/retry calls; the README states that a transaction already submitted to Solana cannot be recalled.
+8. **Diagnostics and documentation — pass.** Health exposes only a sanitized `privyAgentDelegation` readiness boolean. `.env.example`, Railway IaC preservation, `AGENTS.md`, and the root README document the settings, dashboard steps, authorization model, revocation behavior, MCP/REST results, in-process persistence boundary, and excluded powers.
+9. **Focused security and behavior evidence — pass.** Tests cover schema default/strictness, unconfigured and undelegated failure, wallet/address/chain verification, wallet-ID secrecy, normal and sponsored Convert, xStocks, Futures open/close/cancel, retry recovery, simultaneous/replayed idempotency, revocation between signing and broadcast, in-flight position limits, truthful MCP states, fiat/general-wallet/policy/MagicBlock denial, missing raw-sign endpoint, manual mode, and UI/reconciliation copy.
+10. **Repository, browser, and deployment checks — pass.** `npm run check` passed 52 test files and 322 tests, with 4 files and 8 credential/mainnet-gated tests skipped. The release audit passed across 246 browser bundles, including the two new server-secret names. The high-severity production dependency audit exited successfully with only the three documented low-severity MagicBlock transitive findings. The responsive browser audit passed without runtime exceptions or page-level horizontal overflow, `git diff --check` passed, and local production smoke checks returned the expected root, identity, MCP, and forbidden-intent responses. Commits `41d31a6` and `df7738d` were pushed to `origin/main`; Railway deployment `e619e3da-f07d-47c0-919d-25833314fe02` is online and its live health endpoint returns `status: ok` with the new Agent API label.
+
+### Acceptance-criteria result
+
+Criteria 2 and 4–10 have direct code, test, local production, and deployed-boundary evidence. The implementation paths for criteria 1 and 3 also pass focused tests: a configured user can select either immutable mode, and automatic Convert, xStocks, Futures open, close, and cancel complete without per-action UI approval after delegation.
+
+Production activation for criteria 1 and 3 remains intentionally fail-closed. Railway currently has the Privy app ID and identity verification key, but it does not have `PRIVY_APP_SECRET` or `PRIVY_AUTHORIZATION_PRIVATE_KEY`; live health therefore reports `privyAgentDelegation: false` and the Full access choice remains disabled. The matching P-256 public authorization key must first be registered in the Privy dashboard, and its private key plus the Privy app secret must then be stored as server-only Railway variables. No secret or wallet key should be pasted into this file, Git, browser configuration, or chat. This block must not be relabeled `complete` until live health reports delegated signing ready and one owner-authorized mainnet smoke transaction confirms the configured Privy boundary.
