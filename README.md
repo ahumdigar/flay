@@ -1,29 +1,199 @@
 # Flay
 
-Flay is a self-custodial Solana trading aggregator built one product block at a time. Stocks uses the official xStocks Solana catalog and Jupiter-only market execution with correct Token-2022 scaled-share accounting. Eligible Jupiter market swaps use Jupiter-managed sponsorship. Eligible Raydium and Orca SPL-to-SPL market swaps with existing token accounts use Privy's managed sponsor, and Funds includes a tightly bounded Privy-sponsored mainnet USDC send to recipients whose USDC account already exists. Privy supplies the exportable embedded Solana wallet and signs every transaction. Flay deploys no custom Solana program, runs no sponsor wallet, and charges no application fee.
+Flay is a self-custodial Solana trading application that combines a familiar exchange experience with onchain execution. Users sign in with email or Google, receive an exportable Privy embedded wallet, and access aggregated swaps, limit orders, perpetual futures, tokenized stocks, fiat funding, and eligible gasless transactions from one interface.
 
-- [Active xStocks plan](HACKATHON_XSTOCKS_PLAN.md)
-- [xStocks provider research](XSTOCKS_INTEGRATION_RESEARCH.md)
-- [xStocks completion audit](XSTOCKS_COMPLETION_AUDIT.md)
-- [Active minimum gasless plan](HACKATHON_MINIMUM_GASLESS_PLAN.md)
-- [Active gasless USDC send plan](HACKATHON_GASLESS_USDC_SEND_PLAN.md)
-- [Active Raydium and Orca gasless Convert plan](HACKATHON_RAYDIUM_ORCA_GASLESS_PLAN.md)
-- [Raydium and Orca gasless completion audit](RAYDIUM_ORCA_GASLESS_COMPLETION_AUDIT.md)
-- [Exact SOL affordability fix plan](HACKATHON_EXACT_SOL_AFFORDABILITY_FIX_PLAN.md)
-- [Exact SOL affordability fix audit](EXACT_SOL_AFFORDABILITY_FIX_AUDIT.md)
-- [MagicBlock real authorization plan](MAGICBLOCK_REAL_AUTHORIZATION_PLAN.md)
-- [MagicBlock real authorization completion audit](MAGICBLOCK_REAL_AUTHORIZATION_COMPLETION_AUDIT.md)
-- [MagicBlock live-readiness audit](MAGICBLOCK_LIVE_READINESS_FIX_AUDIT.md)
-- [Preserved Futures plan](HACKATHON_FUTURES_PLAN.md)
-- [Current Futures plan-versus-code audit](FUTURES_COMPLETION_AUDIT.md)
-- [Founder-signed Futures acceptance record](FUTURES_SIGNED_ACCEPTANCE.md)
-- [Preserved Convert plan](HACKATHON_CONVERT_PLAN.md)
-- [Preserved Convert audit](CONVERT_COMPLETION_AUDIT.md)
-- [Preserved broad platform gasless plan](HACKATHON_GASLESS_PLAN.md)
-- [Web setup and deployment](apps/web/README.md)
-- [Dependency advisory review](apps/web/ADVISORY_REVIEW.md)
-- [Long-term technical design](TECHNICAL_DESIGN.md)
+**Live application:** [flay-production.up.railway.app](https://flay-production.up.railway.app)
 
-Phoenix public market data is available before setup, and Flay uses Phoenix's official no-referral public onboarding transaction for the connected wallet. GMTrade runs through the pinned, non-signing Rust sidecar in `services/gmtrade-adapter`; the user’s Privy wallet remains the only user transaction signer. MagicBlock PER stays separate from Futures because third-party venue positions remain public on Solana.
+Flay is a public beta running on Solana mainnet. It does not custody user assets, operate a trading venue, deploy a custom Solana program, or charge an application fee.
 
-The Privy-sponsored blocks remain under their hard completion gates until deterministic checks and founder-controlled mainnet transactions pass. Privy sponsorship must be enabled for Solana mainnet with conservative account caps. Flay calls a sponsored action confirmed only after validating the reviewed token movement, external fee payer, and zero sender SOL debit onchain.
+## Features
+
+| Product | Implementation |
+| --- | --- |
+| Authentication and wallet | Privy email/Google authentication, embedded Solana wallet, wallet export, deposits, balances, and user-controlled signing |
+| Convert | Exact-input market quotes from Jupiter Swap V2, Raydium Trade API, and Orca Whirlpools with automatic or manual route selection |
+| Limit orders | Jupiter Trigger orders with explicit review and wallet signing |
+| Futures | Unified Phoenix and GMTrade markets, route comparison, reference candles, collateral controls, order review, positions, and recovery states |
+| Stocks | Official xStocks Solana catalog, Token-2022 scaled-share accounting, issuer reference data, and Jupiter execution |
+| Funds | Privy Card Onramps, wallet receive address, and a bounded USDC transfer flow |
+| Gas sponsorship | Jupiter-managed sponsorship for eligible Jupiter swaps and Privy-managed sponsorship for eligible reviewed SPL swaps and USDC sends |
+| Activity | Wallet-bound transaction history and links to confirmed Solana transactions |
+
+Provider eligibility is checked for every action. A route can be unavailable because of liquidity, venue onboarding, wallet balance, account rent, regional restrictions, or provider health.
+
+## How Flay works
+
+```mermaid
+flowchart LR
+    U[User] --> P[Privy authentication and wallet]
+    P --> W[React application]
+    W --> A[Flay Express API]
+    A --> C[Jupiter / Raydium / Orca]
+    A --> F[Phoenix]
+    A --> G[GMTrade Rust adapter]
+    A --> X[xStocks]
+    A --> R[Solana RPC]
+    C --> S[Solana mainnet]
+    F --> S
+    G --> S
+    P --> S
+```
+
+The server requests quotes, normalizes venue responses, builds transactions, validates their structure, and simulates the exact transaction where required. The browser presents the resulting provider, output, minimum received, fees, sponsorship status, and warnings. The user's Privy wallet remains the signer.
+
+Futures candles are stable reference data rendered with TradingView Lightweight Charts. They are not presented as a venue's exact execution price. Phoenix and GMTrade retain their own collateral, funding, liquidation, and position models.
+
+## Trust and security model
+
+- Flay never receives or stores an embedded-wallet private key.
+- State-changing API requests are authenticated and bound to the authenticated wallet.
+- Quotes and prepared transactions expire; stale transactions must be rebuilt.
+- Provider-built transactions are checked against the reviewed wallet, mints, amounts, programs, pools, and fee payer before signing.
+- Exact simulations enforce current balance, network-fee, and account-rent requirements.
+- Sponsored flows accept only their reviewed transaction shape and verify the confirmed onchain result.
+- Provider secrets, identity tokens, signed transaction bytes, and private RPC credentials stay out of browser bundles and logs.
+- A provider outage disables affected new actions while preserving visible balances, positions, and recovery controls where cached state is available.
+
+MagicBlock protected-balance functionality is isolated from third-party venues. It does not make Jupiter, Phoenix, GMTrade, or xStocks activity private; those transactions remain observable on Solana.
+
+## Technology
+
+- **Frontend:** React 19, TypeScript, Vite, Lightweight Charts
+- **API:** Express 5, Zod, Solana Web3.js
+- **Authentication and wallet:** Privy
+- **Swap venues:** Jupiter, Raydium, Orca
+- **Futures venues:** Phoenix and GMTrade
+- **Tokenized stocks:** xStocks with Jupiter execution
+- **Protected balance integration:** MagicBlock
+- **GMTrade bridge:** pinned Rust sidecar using `gmsol-sdk`
+- **Deployment:** Docker and Railway
+
+## Repository structure
+
+```text
+.
+├── apps/web/                    React client, Express API, shared types and tests
+├── services/gmtrade-adapter/    Non-signing Rust adapter for GMTrade
+├── .railway/railway.ts          Railway infrastructure configuration
+├── Dockerfile                   Production multi-stage build
+├── AGENTS.md                    Repository engineering and safety rules
+└── agent.md                     Implementation-plan and completion-audit record
+```
+
+## Local development
+
+### Prerequisites
+
+- Node.js 22 or newer
+- npm 10 or newer
+- Rust 1.90 or newer
+- A Solana mainnet RPC that supports token-account reads, address lookup tables, transaction history, and v0 transaction simulation
+- A Privy application configured for Solana embedded wallets
+
+### Setup
+
+```sh
+git clone https://github.com/ahumdigar/flay.git
+cd flay
+
+cargo build --release --locked \
+  --manifest-path services/gmtrade-adapter/Cargo.toml
+
+cd apps/web
+npm ci
+cp .env.example .env
+npm run dev
+```
+
+Open [http://localhost:5173](http://localhost:5173).
+
+The server automatically serves the Vite application in development and the built `dist` directory in production. Use `npm run dev:supervised` when a local process should restart after an unexpected provider-level failure.
+
+## Configuration
+
+Copy [`apps/web/.env.example`](apps/web/.env.example) to `apps/web/.env`. The real `.env` is ignored by Git.
+
+| Variable | Required | Purpose |
+| --- | --- | --- |
+| `VITE_PRIVY_APP_ID` | Yes | Public Privy application identifier used by the browser |
+| `PRIVY_APP_ID` | Yes | Matching server-side Privy application identifier |
+| `PRIVY_VERIFICATION_KEY` | Yes | Server-only Privy identity-token verification key |
+| `SOLANA_RPC_URL` | Yes | Primary Solana mainnet RPC |
+| `SOLANA_FALLBACK_RPC_URL` | No | Optional independent RPC fallback |
+| `VITE_PRIVY_ONRAMP_ENV` | Yes for funding | `sandbox` or `production`; embedded into the client build |
+| `JUPITER_API_KEY` | No | Higher-capacity Jupiter API access when available |
+| `GMTRADE_ADAPTER_BIN` | No | Override for the compiled GMTrade adapter path |
+| `GMTRADE_ADAPTER_TIMEOUT_MS` | No | Bounded sidecar request timeout |
+| `MAGICBLOCK_BASE_URL` / `MAGICBLOCK_TEE_BASE_URL` | No | MagicBlock service endpoints |
+| `XSTOCKS_*` | No | Official xStocks endpoint and cache/timeout tuning |
+| `PROVIDER_TIMEOUT_MS` / `QUOTE_CACHE_MS` | No | Global provider and quote-cache tuning |
+
+Never place a secret, private RPC URL, or server verification material in a `VITE_` variable. Vite variables are public browser configuration.
+
+In the Privy dashboard:
+
+1. Add the local and deployed origins.
+2. Enable email and/or Google login.
+3. Enable embedded Solana wallets, user-owned wallet export, and identity tokens.
+4. Enable Card Onramps for production funding.
+5. Configure Solana mainnet fee sponsorship and billing before testing Privy-sponsored actions.
+
+Gas sponsorship is dynamic. Flay labels an action sponsored only after validating the exact prepared transaction and its non-user fee payer. Native SOL wrapping, missing token accounts, venue setup rent, limit orders, and futures actions can still require wallet SOL.
+
+## Commands
+
+Run these commands from `apps/web`:
+
+| Command | Purpose |
+| --- | --- |
+| `npm run dev` | Start the development server |
+| `npm run dev:supervised` | Start the self-restarting local supervisor |
+| `npm run build` | Run TypeScript checks and create the production Vite bundle |
+| `npm run test` | Run the Vitest suite |
+| `npm run check` | Run the production build and full test suite |
+| `npm run release:audit` | Scan source and browser bundles for release-safety violations |
+| `npm run browser:audit` | Exercise desktop and mobile product flows through Chromium CDP |
+| `npm run browser:audit:onramp` | Exercise the isolated Privy onramp checkout flow |
+
+The live-provider tests are intentionally gated and may be skipped when their required credentials or mainnet conditions are unavailable. Unit and integration tests must not submit real transactions.
+
+## Dependency advisory status
+
+The pinned GMTrade SDK currently brings six Rust advisories through its Solana 2.1 dependency graph: `RUSTSEC-2024-0344`, `RUSTSEC-2022-0093`, `RUSTSEC-2026-0258`, `RUSTSEC-2026-0098`, `RUSTSEC-2026-0099`, and `RUSTSEC-2026-0104`. They are explicit exceptions in `services/gmtrade-adapter/.cargo/audit.toml`. The adapter is a bounded, non-signing stdin/stdout sidecar that receives public keys and returns unsigned transaction data; it never holds a user key. These exceptions must be removed after GMTrade publishes a compatible SDK on a fixed Solana dependency generation.
+
+The JavaScript production tree currently has three low-severity `elliptic` findings inherited through the MagicBlock attestation dependency. There are no accepted moderate, high, or critical npm findings. Do not force a breaking dependency downgrade to hide these results; re-evaluate them when MagicBlock publishes a compatible fixed tree.
+
+`apps/web/vendor/bigint-buffer` is a private pure-JavaScript compatibility package replacing the unpatched native `bigint-buffer@1.1.5` binding. It exposes only the four bounded conversion functions required by the Solana dependency tree and has no native code or install script.
+
+## Production deployment
+
+The root [`Dockerfile`](Dockerfile) builds the locked Rust GMTrade adapter and the React application, then creates a non-root Node 22 runtime. Railway configuration in [`.railway/railway.ts`](.railway/railway.ts) keeps one replica because prepared transaction intents are short-lived in-memory records.
+
+With the Railway CLI authenticated and the project linked:
+
+```sh
+npm ci
+railway config apply --yes
+railway up --detach --service flay --environment production
+```
+
+Set production variables in Railway rather than committing them. Railway supplies `PORT`; Flay binds to `0.0.0.0`. After deployment, verify:
+
+```sh
+curl -fsS https://flay-production.up.railway.app/api/health
+```
+
+The health response reports sanitized readiness for Privy, RPC, swap providers, Futures, Stocks, MagicBlock, and funding integrations without exposing credentials.
+
+## Product boundaries
+
+- Flay currently targets Solana mainnet only.
+- Users approve and sign their own transactions; confirmation and settlement still depend on Solana and the selected venue.
+- Phoenix execution requires wallet onboarding and collateral setup before it becomes eligible.
+- GMTrade availability depends on the pinned sidecar and upstream GMTrade services.
+- xStocks are tokenized financial instruments, not direct equities. Availability and rights depend on the issuer and the user's jurisdiction.
+- Fiat purchases are completed by Privy's available payment provider and are subject to regional support, KYC, provider fees, and provider terms.
+- Low-value trades may be uneconomic or impossible when network fees, token-account rent, venue minimums, or available liquidity exceed the wallet's usable balance.
+- Protected-balance integrations do not conceal public third-party trades or wallet funding on Solana.
+
+Flay is experimental software. Review every transaction, venue, fee, and risk disclosure before signing.

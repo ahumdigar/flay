@@ -1,5 +1,5 @@
 [advisories]
-# Reviewed for the hackathon boundary in ../../apps/web/ADVISORY_REVIEW.md.
+# Reviewed under "Dependency advisory status" in ../../../README.md.
 # All six enter through the plan-pinned gmsol-sdk 0.10 / Solana 2.1 graph.
 # Re-run without this list when upgrading that venue stack for public production.
 ignore = [
