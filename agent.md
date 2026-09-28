@@ -4,9 +4,9 @@
 
 Before implementing a new block, write its plan and acceptance criteria here. Before declaring it complete, compare the final repository with every requirement, run the relevant build, test, security, and live checks, and add a plan-to-code completion audit here. Do not stop at a visually finished interface when execution, recovery, security, or evidence remains incomplete.
 
-## Active plan: repository documentation cleanup
+## Completed plan: repository documentation cleanup
 
-**Status:** active
+**Status:** complete
 **Date:** 2026-09-28
 **Scope:** remove obsolete documentation from the GitHub repository and replace the root README with one professional, accurate project guide
 
@@ -36,7 +36,7 @@ Do not declare the cleanup complete until the final tracked-file inventory, repo
 
 ## Repository documentation cleanup audit
 
-**Status:** locally verified; final `origin/main` synchronization pending
+**Status:** complete
 **Date:** 2026-09-28
 
 ### Plan-to-repository comparison
@@ -47,4 +47,4 @@ Do not declare the cleanup complete until the final tracked-file inventory, repo
 4. **References and links — pass.** No retained source or configuration references a removed document. All relative links in the retained documentation resolve. The Rust audit exception rationale was consolidated into the root README and its configuration comment points to that retained section.
 5. **Build and live verification — pass.** `npm run check` completed the TypeScript and Vite production build; 270 tests passed and 8 credential/mainnet-gated tests remained explicitly skipped. `npm run release:audit` passed across 246 bundle files. The live root, health, Futures, Stocks, and Convert discovery endpoints returned HTTP 200; health returned `ok`, GMTrade returned `ready`, and xStocks returned its complete 1,124-asset catalog.
 6. **Security and artifact checks — pass.** `npm audit --omit=dev --audit-level=high` passed with three disclosed low-severity MagicBlock dependency findings. `cargo audit` passed with the six documented exceptions and 11 allowed maintenance/soundness warnings. No real `.env`, secret value, dependency tree, build output, Rust target, artifact, log, or PID is included in the intended Git tree. `.dockerignore` contains every required exclusion and the Dockerfile has no broad `COPY .` instruction.
-7. **GitHub synchronization — pending.** Commit the verified cleanup, push it to `origin/main`, confirm the working tree is clean and local `HEAD` equals `origin/main`, then change this item and the audit status to `pass`/`complete` in the final audit commit.
+7. **GitHub synchronization — pass.** The verified cleanup commit `01eb8e9` was pushed to `origin/main`. The post-push check confirmed a clean working tree, local `HEAD` equal to `origin/main`, and exactly the three required Markdown files in the committed tree. This embedded completion record is the sole follow-up documentation change.
