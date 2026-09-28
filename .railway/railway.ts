@@ -15,6 +15,8 @@ export default defineRailway(() => {
     env: {
       NODE_ENV: preserve(),
       PRIVY_APP_ID: preserve(),
+      PRIVY_APP_SECRET: preserve(),
+      PRIVY_AUTHORIZATION_PRIVATE_KEY: preserve(),
       PRIVY_VERIFICATION_KEY: preserve(),
       PROVIDER_TIMEOUT_MS: preserve(),
       SOLANA_RPC_URL: preserve(),
