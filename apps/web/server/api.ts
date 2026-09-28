@@ -13,6 +13,7 @@ import { GaslessUsdcSendService } from './gasless-usdc-send-service.js';
 import { StockService } from './stocks-service.js';
 import { AgentService } from './agent/service.js';
 import { mountAgentMcp } from './agent/mcp.js';
+import { agentRequestOutcome } from './agent/outcome.js';
 import {
   agentExecuteSchema,
   agentIntentSubmissionSchema,
@@ -161,7 +162,7 @@ export function createApiRouter(): Router {
         rpc: rpcProviderLabel(),
         fiatOnRamp: 'Privy Card Onramps',
         stocks: ['xStocks', 'Jupiter Swap V2 Router'],
-        agentAccess: 'Flay approval-gated capability API',
+        agentAccess: 'Flay user-selectable approval or delegated capability API',
         agentMcp: 'Model Context Protocol · Streamable HTTP · /api/mcp',
       },
       gasless: {
@@ -194,7 +195,7 @@ export function createApiRouter(): Router {
     const input = agentPolicySchema.parse(request.body);
     assertIdentityWallet(request, input.wallet);
     const { wallet, ...policy } = input;
-    response.status(201).json(agents.createCredential(request.flayIdentity!.userId, wallet, policy));
+    response.status(201).json(await agents.createCredentialForIdentity(request.flayIdentity!.userId, wallet, policy));
   }));
 
   router.post('/agent/credentials/:id/revoke', requireIdentity, rateLimit(10, 60_000), asyncRoute(async (request, response) => {
@@ -214,7 +215,12 @@ export function createApiRouter(): Router {
     const input = agentIntentSubmissionSchema.parse(request.body);
     const authorization = request.header('authorization');
     const credential = authorization?.startsWith('Bearer ') ? authorization.slice(7) : undefined;
-    response.status(202).json({ request: await agents.submit(credential, input) });
+    const agentRequest = await agents.submit(credential, input);
+    const acceptedForLater = agentRequest.status === 'pending' || agentRequest.status === 'prepared';
+    response.status(acceptedForLater ? 202 : 200).json({
+      request: agentRequest,
+      ...agentRequestOutcome(agentRequest),
+    });
   }));
 
   router.post('/agent/requests/:id/review', requireIdentity, rateLimit(12, 60_000), asyncRoute(async (request, response) => {

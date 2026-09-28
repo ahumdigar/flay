@@ -1,11 +1,13 @@
 import type { FuturesExecution, FuturesPreparedStep, FuturesRouteChoice, FuturesSide, FuturesVenue } from './futures.js';
-import type { ExecutionResult, PreparedTransaction, StockTradeSide } from './types.js';
+import type { ExecutionResult, GasPayment, PreparedTransaction, StockTradeContext, StockTradeSide } from './types.js';
 
 export type AgentProduct = 'convert' | 'stocks' | 'futures';
 export type AgentRequestStatus = 'pending' | 'prepared' | 'rejected' | 'expired' | 'failed' | 'completed';
+export type AgentApprovalMode = 'always-ask' | 'automatic';
 
 export interface AgentPolicyInput {
   name: string;
+  approvalMode: AgentApprovalMode;
   products: AgentProduct[];
   maxTransactionUsd: number;
   maxDailyUsd: number;
@@ -22,6 +24,7 @@ export interface AgentCredentialSummary {
   id: string;
   name: string;
   wallet: string;
+  approvalMode: AgentApprovalMode;
   status: 'active' | 'expired' | 'revoked';
   products: AgentProduct[];
   maxTransactionUsd: number;
@@ -92,6 +95,11 @@ export interface AgentExecutionSummary {
   explorerUrl: string;
   provider: string;
   completedAt: number;
+  marketActivity?: {
+    kind: 'Market' | 'Stock';
+    gasPayment?: GasPayment;
+    stock?: StockTradeContext;
+  };
 }
 
 export interface AgentRequest {
@@ -99,6 +107,7 @@ export interface AgentRequest {
   credentialId: string;
   credentialName: string;
   wallet: string;
+  approvalMode: AgentApprovalMode;
   intent: AgentIntent;
   riskUsd: string;
   status: AgentRequestStatus;
@@ -129,8 +138,8 @@ export interface AgentWorkspaceResponse {
   requests: AgentRequest[];
   events: AgentAuditEvent[];
   security: {
-    requiresUserApproval: true;
-    userSignsEveryTransaction: true;
+    approvalModes: AgentApprovalMode[];
+    automaticExecutionConfigured: boolean;
     fiatOnrampAvailable: false;
     arbitraryWalletAccess: false;
     credentialStorage: 'sha256-hash-only';

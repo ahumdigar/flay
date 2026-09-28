@@ -18,6 +18,7 @@ export const agentStockAmountSchema = z.string().trim().regex(/^(?:0|[1-9]\d*)(?
 export const agentPolicySchema = z.object({
   wallet: agentPublicKeySchema,
   name: z.string().trim().min(2).max(60),
+  approvalMode: z.enum(['always-ask', 'automatic']).default('always-ask'),
   products: z.array(z.enum(['convert', 'stocks', 'futures'])).min(1).max(3).transform((items) => [...new Set(items)]),
   maxTransactionUsd: z.number().finite().min(1).max(1_000_000),
   maxDailyUsd: z.number().finite().min(1).max(10_000_000),

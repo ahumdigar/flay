@@ -8,6 +8,7 @@ import type { FuturesService } from '../futures/futures-service.js';
 import type { StockService } from '../stocks-service.js';
 import type { TokenService } from '../tokens.js';
 import type { AgentService } from './service.js';
+import { agentRequestOutcome } from './outcome.js';
 import {
   agentAtomicAmountSchema,
   agentFuturesMarketSchema,
@@ -27,10 +28,10 @@ const readOnlyAnnotations = {
   openWorldHint: true,
 } as const;
 
-const proposalAnnotations = {
+const tradingAnnotations = {
   readOnlyHint: false,
   destructiveHint: true,
-  idempotentHint: false,
+  idempotentHint: true,
   openWorldHint: true,
 } as const;
 
@@ -70,7 +71,7 @@ function safeToolError(error: unknown): CallToolResult {
   };
 }
 
-function approvalResult(request: AgentRequest): CallToolResult {
+export function agentRequestResult(request: AgentRequest): CallToolResult {
   return safeResult({
     ok: true,
     request: {
@@ -80,10 +81,11 @@ function approvalResult(request: AgentRequest): CallToolResult {
       riskMicroUsd: request.riskUsd,
       createdAt: request.createdAt,
       expiresAt: request.expiresAt,
+      approvalMode: request.approvalMode,
+      failure: request.failure,
+      execution: request.execution,
     },
-    fundsMoved: false,
-    humanApprovalRequired: true,
-    nextStep: 'Ask the user to open Flay → Agent access, review the exact provider transaction, and approve it in Privy before this request expires.',
+    ...agentRequestOutcome(request),
   });
 }
 
@@ -189,10 +191,10 @@ function registerReadTools(server: McpServer, dependencies: McpDependencies) {
   });
 }
 
-function registerProposalTools(server: McpServer, dependencies: McpDependencies, credential: string) {
+function registerTradingTools(server: McpServer, dependencies: McpDependencies, credential: string) {
   async function submit(input: AgentIntentSubmission) {
     try {
-      return approvalResult(await dependencies.agents.submit(credential, input));
+      return agentRequestResult(await dependencies.agents.submit(credential, input));
     } catch (error) {
       return safeToolError(error);
     }
@@ -200,35 +202,35 @@ function registerProposalTools(server: McpServer, dependencies: McpDependencies,
 
   server.registerTool('flay_request_convert', {
     title: 'Request a Flay conversion',
-    description: 'Create a policy-checked Convert proposal for the credential-bound wallet. amountAtomic is the exact raw input amount using the input mint decimals. No funds move until the user reviews and signs in Privy.',
+    description: 'Submit a policy-checked Convert intent for the credential-bound wallet. amountAtomic is the exact raw input amount using the input mint decimals. Always-ask capabilities queue it for review; automatic capabilities execute it within the owner’s guardrails.',
     inputSchema: z.object({
-      idempotencyKey: z.string().uuid().describe('A new UUID for a new proposal. Reuse the same UUID only when retrying the identical proposal.'),
+      idempotencyKey: z.string().uuid().describe('A new UUID for a new request. Reuse the same UUID only when retrying the identical request.'),
       inputMint: agentPublicKeySchema.describe('Allowed Solana input mint.'),
       outputMint: agentPublicKeySchema.describe('Allowed Solana output mint.'),
       amountAtomic: agentAtomicAmountSchema.describe('Exact raw input amount in the input mint atomic units.'),
       slippageBps: z.number().int().min(1).max(500).describe('Maximum slippage in basis points; 50 means 0.50%.'),
     }).strict().refine((value) => value.inputMint !== value.outputMint, { path: ['outputMint'], message: 'Choose different tokens.' }),
-    annotations: proposalAnnotations,
+    annotations: tradingAnnotations,
   }, (input) => submit({ idempotencyKey: input.idempotencyKey, intent: { kind: 'convert', inputMint: input.inputMint, outputMint: input.outputMint, amountAtomic: input.amountAtomic, slippageBps: input.slippageBps } }));
 
   server.registerTool('flay_request_stock_trade', {
     title: 'Request an xStocks trade',
-    description: 'Create a policy-checked xStocks buy or sell proposal. For buys, amount is display USDC; for sells, amount is display xStock units. No funds move until the user reviews and signs in Privy.',
+    description: 'Submit a policy-checked xStocks buy or sell intent. For buys, amount is display USDC; for sells, amount is display xStock units. Behavior follows the owner-selected approval mode.',
     inputSchema: z.object({
-      idempotencyKey: z.string().uuid().describe('A new UUID for a new proposal. Reuse it only for an identical retry.'),
+      idempotencyKey: z.string().uuid().describe('A new UUID for a new request. Reuse it only for an identical retry.'),
       symbol: agentStockSymbolSchema.describe('Allowed official xStocks provider symbol, for example AAPLX.'),
       side: z.enum(['buy', 'sell']),
       amount: agentStockAmountSchema.describe('Display USDC amount for buy or display xStock units for sell.'),
       slippageBps: z.number().int().min(1).max(500).describe('Maximum slippage in basis points.'),
     }).strict(),
-    annotations: proposalAnnotations,
+    annotations: tradingAnnotations,
   }, (input) => submit({ idempotencyKey: input.idempotencyKey, intent: { kind: 'stock', symbol: input.symbol, side: input.side, amount: input.amount, slippageBps: input.slippageBps } }));
 
   server.registerTool('flay_request_futures_open', {
     title: 'Request a Futures position',
-    description: 'Create a policy-checked Phoenix/GMTrade perpetual proposal. collateralAtomic uses six-decimal USDC atomic units and leverageBps uses 10000 per 1×. No position opens until the user reviews and signs in Privy.',
+    description: 'Submit a policy-checked Phoenix/GMTrade perpetual intent. collateralAtomic uses six-decimal USDC atomic units and leverageBps uses 10000 per 1×. Behavior follows the owner-selected approval mode.',
     inputSchema: z.object({
-      idempotencyKey: z.string().uuid().describe('A new UUID for a new proposal. Reuse it only for an identical retry.'),
+      idempotencyKey: z.string().uuid().describe('A new UUID for a new request. Reuse it only for an identical retry.'),
       market: agentFuturesMarketSchema,
       side: z.enum(['long', 'short']),
       orderType: z.enum(['market', 'limit']),
@@ -241,7 +243,7 @@ function registerProposalTools(server: McpServer, dependencies: McpDependencies,
       if (value.orderType === 'limit' && !value.limitPriceMicroUsd) context.addIssue({ code: 'custom', path: ['limitPriceMicroUsd'], message: 'Limit price is required.' });
       if (value.orderType === 'market' && value.limitPriceMicroUsd) context.addIssue({ code: 'custom', path: ['limitPriceMicroUsd'], message: 'Market orders cannot include a limit price.' });
     }),
-    annotations: proposalAnnotations,
+    annotations: tradingAnnotations,
   }, (input) => submit({
     idempotencyKey: input.idempotencyKey,
     intent: {
@@ -254,22 +256,22 @@ function registerProposalTools(server: McpServer, dependencies: McpDependencies,
 
   server.registerTool('flay_request_futures_manage', {
     title: 'Request a Futures close or cancel',
-    description: 'Create a policy-checked request to close an existing position or cancel an existing order using its exact provider native ID. No action executes until the user reviews and signs in Privy.',
+    description: 'Submit a policy-checked request to close an existing position or cancel an existing order using its exact provider native ID. Behavior follows the owner-selected approval mode.',
     inputSchema: z.object({
-      idempotencyKey: z.string().uuid().describe('A new UUID for a new proposal. Reuse it only for an identical retry.'),
+      idempotencyKey: z.string().uuid().describe('A new UUID for a new request. Reuse it only for an identical retry.'),
       action: z.enum(['close', 'cancel']),
       venue: z.enum(['phoenix', 'gmtrade']),
       market: agentFuturesMarketSchema,
       nativeId: z.string().min(1).max(128).describe('Exact venue position ID for close or order ID for cancel.'),
     }).strict(),
-    annotations: proposalAnnotations,
+    annotations: tradingAnnotations,
   }, (input) => submit({ idempotencyKey: input.idempotencyKey, intent: { kind: 'futures-manage', action: input.action, venue: input.venue, market: input.market, nativeId: input.nativeId } }));
 }
 
 function createFlayMcpServer(dependencies: McpDependencies, credential: string) {
   const server = new McpServer({ name: 'flay', version: '1.0.0' });
   registerReadTools(server, dependencies);
-  registerProposalTools(server, dependencies, credential);
+  registerTradingTools(server, dependencies, credential);
   return server;
 }
 

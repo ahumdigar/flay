@@ -1,4 +1,4 @@
-import type { AgentExecutionResponse, AgentIntent, AgentIntentSubmission, AgentPolicyInput, AgentReviewResponse } from '../../shared/agent.js';
+import type { AgentExecutionResponse, AgentIntent, AgentIntentSubmission, AgentPolicyInput, AgentRequest, AgentReviewResponse } from '../../shared/agent.js';
 import type { FuturesIntent, FuturesRouteQuote } from '../../shared/futures.js';
 import { decimalToAtomic } from '../../shared/amounts.js';
 import { AppError, asAppError } from '../errors.js';
@@ -8,6 +8,7 @@ import { prepareRankedMarketRoute } from '../market-route-fallback.js';
 import type { QuoteService } from '../quote-service.js';
 import type { StockService } from '../stocks-service.js';
 import type { TokenService } from '../tokens.js';
+import { PrivyAgentDelegatedSigner, type AgentDelegatedSigner } from './delegated-signer.js';
 import { AgentStore, type AgentCredentialRecord, type AgentRequestRecord } from './store.js';
 
 const MICRO_USD = 1_000_000n;
@@ -49,6 +50,7 @@ function assertPolicyBasics(policy: AgentPolicyInput, intent: AgentIntent) {
 
 export class AgentService {
   readonly store = new AgentStore();
+  private readonly automaticExecutions = new Map<string, Promise<AgentRequest>>();
 
   constructor(
     private readonly tokens: TokenService,
@@ -56,14 +58,30 @@ export class AgentService {
     private readonly stocks: StockService,
     private readonly futures: FuturesService,
     private readonly futuresTransactions: FuturesTransactionService,
+    private readonly delegatedSigner: AgentDelegatedSigner = new PrivyAgentDelegatedSigner(),
   ) {}
 
-  createCredential(userId: string, wallet: string, policy: AgentPolicyInput) {
-    return this.store.createCredential(userId, wallet, policy);
+  createCredential(userId: string, wallet: string, policy: AgentPolicyInput, delegatedWalletId: string | null = null) {
+    if (policy.approvalMode === 'automatic') {
+      if (!this.delegatedSigner.available()) {
+        throw new AppError(503, 'AGENT_AUTOMATIC_NOT_CONFIGURED', 'Automatic agent execution is not configured on this Flay deployment. Use Always ask for now.');
+      }
+      if (!delegatedWalletId) {
+        throw new AppError(409, 'AGENT_WALLET_NOT_DELEGATED', 'Approve the one-time Privy wallet delegation before creating automatic agent access.');
+      }
+    }
+    return this.store.createCredential(userId, wallet, policy, delegatedWalletId);
+  }
+
+  async createCredentialForIdentity(userId: string, wallet: string, policy: AgentPolicyInput) {
+    const delegatedWalletId = policy.approvalMode === 'automatic'
+      ? await this.delegatedSigner.resolveWalletId(userId, wallet)
+      : null;
+    return this.createCredential(userId, wallet, policy, delegatedWalletId);
   }
 
   workspace(userId: string, wallet: string) {
-    return this.store.workspace(userId, wallet);
+    return this.store.workspace(userId, wallet, this.delegatedSigner.available());
   }
 
   revoke(userId: string, wallet: string, id: string) {
@@ -84,17 +102,22 @@ export class AgentService {
     const policy = this.store.policy(credential);
     assertPolicyBasics(policy, submission.intent);
     const existing = this.store.existingRequest(credential, submission.idempotencyKey, submission.intent);
-    if (existing) return existing;
+    if (existing) return policy.approvalMode === 'automatic' ? this.executeAutomatically(credential, existing) : existing;
     const risk = await this.riskMicroUsd(credential, policy, submission.intent);
     const maximum = usdToMicro(policy.maxTransactionUsd);
     if (risk > maximum) throw new AppError(403, 'AGENT_TRANSACTION_LIMIT', `This request exceeds the $${policy.maxTransactionUsd} per-request guardrail.`);
     const daily = this.store.dailyRiskMicroUsd(credential.id);
     if (daily + risk > usdToMicro(policy.maxDailyUsd)) throw new AppError(403, 'AGENT_DAILY_LIMIT', `This request would exceed the rolling $${policy.maxDailyUsd} daily guardrail.`);
-    return this.store.createRequest(credential, submission.idempotencyKey, submission.intent, microToUsd(risk));
+    const created = this.store.createRequest(credential, submission.idempotencyKey, submission.intent, microToUsd(risk));
+    return policy.approvalMode === 'automatic' ? this.executeAutomatically(credential, created) : created;
   }
 
   async review(userId: string, wallet: string, id: string): Promise<AgentReviewResponse> {
     const request = this.store.ownedRequest(userId, wallet, id);
+    const policy = this.store.requestPolicy(request);
+    if (policy.approvalMode === 'automatic') {
+      throw new AppError(409, 'AGENT_AUTOMATIC_REVIEW_UNAVAILABLE', 'Automatic requests are executed by Flay within their guardrails and do not use manual approval.');
+    }
     if (request.status === 'prepared') {
       const existing = this.store.prepared(request);
       if (existing.prepared.expiresAt > Date.now()) {
@@ -103,7 +126,6 @@ export class AgentService {
       this.store.requeueExpiredPreparation(request);
     }
     if (request.status !== 'pending') throw new AppError(409, 'AGENT_REQUEST_STATE_INVALID', 'Only pending requests can be reviewed.');
-    const policy = this.store.requestPolicy(request);
     try {
       assertPolicyBasics(policy, request.intent);
       const action = await this.prepare(request, policy);
@@ -133,6 +155,13 @@ export class AgentService {
         explorerUrl: result.explorerUrl,
         provider: 'provider' in result ? result.provider : result.venue,
         completedAt: Date.now(),
+        ...(action.type === 'market' ? {
+          marketActivity: {
+            kind: action.prepared.review.stock ? 'Stock' as const : 'Market' as const,
+            ...('gasPayment' in result && result.gasPayment ? { gasPayment: result.gasPayment } : {}),
+            ...(action.prepared.review.stock ? { stock: action.prepared.review.stock } : {}),
+          },
+        } : {}),
       });
       return { request: completed, result };
     } catch (error) {
@@ -155,12 +184,100 @@ export class AgentService {
         explorerUrl: result.explorerUrl,
         provider: result.provider,
         completedAt: Date.now(),
+        marketActivity: {
+          kind: action.prepared.review.stock ? 'Stock' : 'Market',
+          ...(result.gasPayment ? { gasPayment: result.gasPayment } : {}),
+          ...(action.prepared.review.stock ? { stock: action.prepared.review.stock } : {}),
+        },
       });
       return { request: completed, result };
     } catch (error) {
       const appError = asAppError(error, 'AGENT_EXECUTION_FAILED');
       this.store.noteFailure(request, appError.message, false);
       throw appError;
+    }
+  }
+
+  private executeAutomatically(credential: AgentCredentialRecord, request: AgentRequest): Promise<AgentRequest> {
+    if (request.status === 'completed' || request.status === 'failed' || request.status === 'rejected' || request.status === 'expired') {
+      return Promise.resolve(request);
+    }
+    const running = this.automaticExecutions.get(request.id);
+    if (running) return running;
+    const execution = this.runAutomaticExecution(credential, request.id).finally(() => {
+      this.automaticExecutions.delete(request.id);
+    });
+    this.automaticExecutions.set(request.id, execution);
+    return execution;
+  }
+
+  private async runAutomaticExecution(credential: AgentCredentialRecord, requestId: string): Promise<AgentRequest> {
+    const request = this.store.ownedRequest(credential.userId, credential.wallet, requestId);
+    try {
+      let action;
+      if (request.status === 'prepared') {
+        const existing = this.store.prepared(request);
+        if (existing.prepared.expiresAt > Date.now()) action = existing;
+        else this.store.requeueExpiredPreparation(request);
+      }
+      if (!action) {
+        if (request.status !== 'pending') return this.store.request(request);
+        const policy = this.store.requestPolicy(request);
+        assertPolicyBasics(policy, request.intent);
+        action = await this.prepare(request, policy);
+        this.store.markPrepared(request, action, true);
+      }
+
+      const delegatedWalletId = this.store.delegatedWalletId(request);
+      this.store.requestPolicy(request);
+      let result;
+      if (
+        action.type === 'market'
+        && action.prepared.kind === 'market-swap'
+        && action.prepared.gasPayment?.provider === 'Privy'
+        && (action.prepared.provider === 'raydium' || action.prepared.provider === 'orca')
+      ) {
+        this.store.prepared(request);
+        this.store.requestPolicy(request);
+        const signature = await this.delegatedSigner.signAndSendSponsored(
+          delegatedWalletId,
+          request.wallet,
+          action.prepared.transaction,
+          `agent-sponsored-${request.id}`,
+        );
+        result = await this.quotes.completePrivySponsored(action.prepared.preparedId, signature);
+      } else {
+        const signedTransaction = await this.delegatedSigner.signTransaction(
+          delegatedWalletId,
+          request.wallet,
+          action.prepared.transaction,
+          `agent-sign-${request.id}`,
+        );
+        this.store.prepared(request);
+        this.store.requestPolicy(request);
+        result = action.type === 'market'
+          ? await this.quotes.execute(action.prepared.preparedId, signedTransaction)
+          : await this.futuresTransactions.execute(action.prepared.preparedId, request.wallet, signedTransaction, `agent-execute-${request.id}`);
+      }
+      return this.store.complete(request, {
+        signature: result.signature,
+        status: result.status,
+        explorerUrl: result.explorerUrl,
+        provider: 'provider' in result ? result.provider : result.venue,
+        completedAt: Date.now(),
+        ...(action.type === 'market' ? {
+          marketActivity: {
+            kind: action.prepared.review.stock ? 'Stock' as const : 'Market' as const,
+            ...('gasPayment' in result && result.gasPayment ? { gasPayment: result.gasPayment } : {}),
+            ...(action.prepared.review.stock ? { stock: action.prepared.review.stock } : {}),
+          },
+        } : {}),
+      });
+    } catch (error) {
+      const appError = asAppError(error, 'AGENT_AUTOMATIC_EXECUTION_FAILED');
+      const terminal = !appError.retryable && appError.status < 500;
+      this.store.noteFailure(request, appError.message, terminal);
+      return this.store.request(request);
     }
   }
 
@@ -185,7 +302,8 @@ export class AgentService {
     if (intent.kind === 'futures-open') {
       const portfolio = await this.futures.portfolio(credential.wallet);
       const openPositions = portfolio.venues.phoenix.positions.length + portfolio.venues.gmtrade.positions.length;
-      if (openPositions >= policy.maxOpenFuturesPositions) throw new AppError(403, 'AGENT_POSITION_LIMIT', `This wallet already has the allowed ${policy.maxOpenFuturesPositions} open futures positions.`);
+      const reservedPositions = this.store.inFlightFuturesOpenCount(credential.wallet);
+      if (openPositions + reservedPositions >= policy.maxOpenFuturesPositions) throw new AppError(403, 'AGENT_POSITION_LIMIT', `This wallet already has the allowed ${policy.maxOpenFuturesPositions} open or pending futures positions.`);
       return BigInt(intent.collateralAtomic);
     }
     return 0n;
@@ -219,7 +337,8 @@ export class AgentService {
     if (intent.kind === 'futures-open') {
       const portfolio = await this.futures.portfolio(request.wallet);
       const openPositions = portfolio.venues.phoenix.positions.length + portfolio.venues.gmtrade.positions.length;
-      if (openPositions >= policy.maxOpenFuturesPositions) throw new AppError(403, 'AGENT_POSITION_LIMIT', `This wallet already has the allowed ${policy.maxOpenFuturesPositions} open futures positions.`);
+      const reservedPositions = this.store.inFlightFuturesOpenCount(request.wallet, request.id);
+      if (openPositions + reservedPositions >= policy.maxOpenFuturesPositions) throw new AppError(403, 'AGENT_POSITION_LIMIT', `This wallet already has the allowed ${policy.maxOpenFuturesPositions} open or pending futures positions.`);
       const routeIntent: FuturesIntent = {
         wallet: request.wallet,
         market: intent.market,

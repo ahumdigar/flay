@@ -21,6 +21,7 @@ interface CredentialRecord extends AgentCredentialSummary {
   userId: string;
   tokenHash: Buffer;
   policy: AgentPolicyInput;
+  delegatedWalletId: string | null;
 }
 
 interface RequestRecord extends AgentRequest {
@@ -47,7 +48,7 @@ function status(record: CredentialRecord, now = Date.now()): AgentCredentialSumm
 }
 
 function publicCredential(record: CredentialRecord): AgentCredentialSummary {
-  const { userId: _userId, tokenHash: _tokenHash, policy: _policy, ...summary } = record;
+  const { userId: _userId, tokenHash: _tokenHash, policy: _policy, delegatedWalletId: _delegatedWalletId, ...summary } = record;
   return { ...summary, status: status(record) };
 }
 
@@ -63,7 +64,7 @@ export class AgentStore {
   private auditEvents: AgentAuditEvent[] = [];
   private rateBuckets = new Map<string, CredentialRateBucket>();
 
-  createCredential(userId: string, wallet: string, policy: AgentPolicyInput): AgentCredentialCreated {
+  createCredential(userId: string, wallet: string, policy: AgentPolicyInput, delegatedWalletId: string | null = null): AgentCredentialCreated {
     this.sweep();
     if (this.credentials.size >= MAX_CREDENTIALS) throw new AppError(503, 'AGENT_CAPACITY_REACHED', 'Agent access is temporarily at capacity.', true);
     const id = randomUUID();
@@ -74,9 +75,11 @@ export class AgentStore {
       id,
       name: policy.name,
       wallet,
+      approvalMode: policy.approvalMode,
       userId,
       tokenHash: hashCredential(credential),
       policy: structuredClone(policy),
+      delegatedWalletId,
       status: 'active',
       products: [...policy.products],
       maxTransactionUsd: policy.maxTransactionUsd,
@@ -92,7 +95,7 @@ export class AgentStore {
       revokedAt: null,
     };
     this.credentials.set(id, record);
-    this.audit(wallet, id, null, 'credential-created', `Created ${policy.name} with ${policy.expiresInHours}h expiry.`);
+    this.audit(wallet, id, null, 'credential-created', `Created ${policy.name} in ${policy.approvalMode} mode with ${policy.expiresInHours}h expiry.`);
     return {
       credential,
       summary: publicCredential(record),
@@ -126,15 +129,15 @@ export class AgentStore {
     return publicCredential(record);
   }
 
-  workspace(userId: string, wallet: string) {
+  workspace(userId: string, wallet: string, automaticExecutionConfigured = false) {
     this.sweep();
     return {
       credentials: [...this.credentials.values()].filter((record) => record.userId === userId && record.wallet === wallet).map(publicCredential).sort((a, b) => b.createdAt - a.createdAt),
       requests: [...this.requests.values()].filter((record) => record.userId === userId && record.wallet === wallet).map(publicRequest).sort((a, b) => b.createdAt - a.createdAt).slice(0, 100),
       events: this.auditEvents.filter((event) => event.wallet === wallet).slice(0, 100).map((event) => structuredClone(event)),
       security: {
-        requiresUserApproval: true as const,
-        userSignsEveryTransaction: true as const,
+        approvalModes: ['always-ask' as const, ...(automaticExecutionConfigured ? ['automatic' as const] : [])],
+        automaticExecutionConfigured,
         fiatOnrampAvailable: false as const,
         arbitraryWalletAccess: false as const,
         credentialStorage: 'sha256-hash-only' as const,
@@ -166,6 +169,7 @@ export class AgentStore {
       credentialId: record.id,
       credentialName: record.name,
       wallet: record.wallet,
+      approvalMode: record.approvalMode,
       userId: record.userId,
       idempotencyKey,
       fingerprint,
@@ -181,7 +185,15 @@ export class AgentStore {
       prepared: null,
     };
     this.requests.set(request.id, request);
-    this.audit(record.wallet, record.id, request.id, 'request-created', `${intent.kind} request awaiting user approval.`);
+    this.audit(
+      record.wallet,
+      record.id,
+      request.id,
+      'request-created',
+      record.approvalMode === 'automatic'
+        ? `${intent.kind} request accepted for automatic execution within guardrails.`
+        : `${intent.kind} request awaiting user approval.`,
+    );
     return publicRequest(request);
   }
 
@@ -193,6 +205,10 @@ export class AgentStore {
     return record;
   }
 
+  request(record: RequestRecord): AgentRequest {
+    return publicRequest(record);
+  }
+
   requestPolicy(record: RequestRecord): AgentPolicyInput {
     const credential = this.credentials.get(record.credentialId);
     if (!credential) throw new AppError(410, 'AGENT_CREDENTIAL_MISSING', 'The capability for this request is unavailable.');
@@ -200,13 +216,30 @@ export class AgentStore {
     return structuredClone(credential.policy);
   }
 
-  markPrepared(record: RequestRecord, prepared: AgentPreparedAction): AgentRequest {
+  delegatedWalletId(record: RequestRecord): string {
+    const credential = this.credentials.get(record.credentialId);
+    if (!credential || status(credential) !== 'active') {
+      throw new AppError(410, 'AGENT_CREDENTIAL_INACTIVE', 'The capability for this request is no longer active.');
+    }
+    if (credential.approvalMode !== 'automatic' || !credential.delegatedWalletId) {
+      throw new AppError(409, 'AGENT_DELEGATION_MISSING', 'This capability has no delegated wallet for automatic execution.');
+    }
+    return credential.delegatedWalletId;
+  }
+
+  markPrepared(record: RequestRecord, prepared: AgentPreparedAction, automatic = false): AgentRequest {
     if (record.status !== 'pending') throw new AppError(409, 'AGENT_REQUEST_STATE_INVALID', 'Only pending requests can be prepared.');
     record.prepared = prepared;
     record.status = 'prepared';
     record.reviewedAt = Date.now();
     record.failure = null;
-    this.audit(record.wallet, record.credentialId, record.id, 'request-prepared', 'User opened the exact transaction review.');
+    this.audit(
+      record.wallet,
+      record.credentialId,
+      record.id,
+      'request-prepared',
+      automatic ? 'Flay prepared and validated the exact transaction for automatic execution.' : 'User opened the exact transaction review.',
+    );
     return publicRequest(record);
   }
 
@@ -255,6 +288,16 @@ export class AgentStore {
     return [...this.requests.values()]
       .filter((record) => record.credentialId === credentialId && record.createdAt >= since && ['pending', 'prepared', 'completed'].includes(record.status))
       .reduce((total, record) => total + BigInt(record.riskUsd), 0n);
+  }
+
+  inFlightFuturesOpenCount(wallet: string, excludeRequestId?: string): number {
+    return [...this.requests.values()].filter((record) => (
+      record.wallet === wallet
+      && record.id !== excludeRequestId
+      && record.intent.kind === 'futures-open'
+      && (record.status === 'pending' || record.status === 'prepared')
+      && record.expiresAt > Date.now()
+    )).length;
   }
 
   private ownedCredential(userId: string, wallet: string, id: string): CredentialRecord {

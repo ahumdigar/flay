@@ -1,4 +1,4 @@
-import type { AgentExecutionResponse, AgentReviewResponse } from '../../shared/agent.js';
+import type { AgentExecutionResponse, AgentRequest, AgentReviewResponse } from '../../shared/agent.js';
 import type { ExecutionResult, GasPayment, StockTradeContext } from '../../shared/types.js';
 
 export interface StoredActivity {
@@ -36,4 +36,21 @@ export function agentMarketActivity(
 
 export function mergeStoredActivity(current: StoredActivity[], entry: StoredActivity): StoredActivity[] {
   return [entry, ...current.filter((item) => item.signature !== entry.signature)].slice(0, 50);
+}
+
+export function automaticAgentMarketActivity(request: AgentRequest): StoredActivity | null {
+  const execution = request.execution;
+  const activity = execution?.marketActivity;
+  if (!execution || !activity) return null;
+  if (activity.kind === 'Stock' && !activity.stock) return null;
+  return {
+    signature: execution.signature,
+    kind: activity.kind,
+    provider: execution.provider,
+    ...(activity.gasPayment ? {
+      gasPayment: { mode: activity.gasPayment.mode, provider: activity.gasPayment.provider },
+    } : {}),
+    createdAt: execution.completedAt,
+    ...(activity.stock ? { stock: activity.stock } : {}),
+  };
 }

@@ -5,6 +5,7 @@ import { AgentStore } from './store.js';
 
 const policy: AgentPolicyInput = {
   name: 'Research agent',
+  approvalMode: 'always-ask',
   products: ['convert', 'stocks', 'futures'],
   maxTransactionUsd: 25,
   maxDailyUsd: 100,
@@ -31,6 +32,7 @@ describe('agent capability store', () => {
     expect(workspace.events[0]).toMatchObject({ type: 'credential-created', wallet: SOL_MINT });
     expect(JSON.stringify(workspace)).not.toContain(created.credential);
     expect(JSON.stringify(workspace)).not.toMatch(/tokenHash|userId/);
+    expect(JSON.stringify(workspace)).not.toMatch(/delegatedWalletId/);
   });
 
   it('binds idempotency keys to one exact intent', () => {

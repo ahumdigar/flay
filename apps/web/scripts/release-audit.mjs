@@ -55,7 +55,7 @@ if (statSync(envFile, { throwIfNoEntry: false })?.isFile()) {
 
 for (const [filename, contents] of bundles) {
   if (/-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----/.test(contents)) findings.push(`${path.relative(root, filename)}: private key material`);
-  if (/\b(?:PRIVY_VERIFICATION_KEY|SOLANA_RPC_URL|JUPITER_API_KEY|PHOENIX_TEST_IDENTITY_TOKEN|ALCHEMY_PAY_APP_SECRET)\b/.test(contents)) {
+  if (/\b(?:PRIVY_VERIFICATION_KEY|PRIVY_APP_SECRET|PRIVY_AUTHORIZATION_PRIVATE_KEY|SOLANA_RPC_URL|JUPITER_API_KEY|PHOENIX_TEST_IDENTITY_TOKEN|ALCHEMY_PAY_APP_SECRET)\b/.test(contents)) {
     findings.push(`${path.relative(root, filename)}: server-only configuration name`);
   }
 }

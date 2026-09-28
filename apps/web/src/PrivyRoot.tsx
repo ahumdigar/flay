@@ -1,4 +1,4 @@
-import { PrivyProvider, useFiatOnramp, useIdentityToken, usePrivy } from '@privy-io/react-auth';
+import { PrivyProvider, useDelegatedActions, useFiatOnramp, useIdentityToken, usePrivy } from '@privy-io/react-auth';
 import {
   useExportWallet,
   useFundWallet,
@@ -55,6 +55,7 @@ function PrivyBridge() {
   const { signAndSendTransaction } = useSignAndSendTransaction();
   const { fund } = useFiatOnramp();
   const { fundWallet } = useFundWallet();
+  const { delegateWallet, revokeWallets } = useDelegatedActions();
 
   const embeddedAccount = user?.linkedAccounts.find((account) => (
     account.type === 'wallet'
@@ -71,6 +72,7 @@ function PrivyBridge() {
     authenticated,
     walletReady: walletsReady && Boolean(wallet),
     walletAddress: wallet?.address ?? embeddedAddress,
+    walletDelegated: Boolean(embeddedAccount && 'delegated' in embeddedAccount && embeddedAccount.delegated),
     identityToken,
     fiatOnrampEnvironment,
     login: () => login(),
@@ -78,6 +80,14 @@ function PrivyBridge() {
     exportWallet: async () => {
       if (!wallet?.address && !embeddedAddress) throw new Error('Your embedded Solana wallet is still loading.');
       await exportWallet({ address: wallet?.address ?? embeddedAddress! });
+    },
+    delegateWalletForAgent: async () => {
+      const address = wallet?.address ?? embeddedAddress;
+      if (!address) throw new Error('Your embedded Solana wallet is still loading.');
+      await delegateWallet({ address, chainType: 'solana' });
+    },
+    revokeAgentWalletDelegation: async () => {
+      await revokeWallets();
     },
     signMessage: async (message: Uint8Array) => {
       if (!wallet) throw new Error('Your embedded Solana wallet is still loading.');
@@ -137,6 +147,7 @@ function PrivyBridge() {
   }), [
     authenticated,
     embeddedAddress,
+    delegateWallet,
     exportWallet,
     fund,
     fundWallet,
@@ -145,6 +156,7 @@ function PrivyBridge() {
     login,
     logout,
     ready,
+    revokeWallets,
     signMessage,
     signAndSendTransaction,
     signTransaction,

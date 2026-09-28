@@ -6,11 +6,14 @@ export interface FlayAuth {
   authenticated: boolean;
   walletReady: boolean;
   walletAddress: string | null;
+  walletDelegated: boolean;
   identityToken: string | null;
   fiatOnrampEnvironment: PrivyOnrampEnvironment;
   login(): void;
   logout(): Promise<void>;
   exportWallet(): Promise<void>;
+  delegateWalletForAgent(): Promise<void>;
+  revokeAgentWalletDelegation(): Promise<void>;
   signMessage(message: Uint8Array): Promise<Uint8Array>;
   signTransaction(transaction: Uint8Array): Promise<Uint8Array>;
   signAndSendSponsoredTransaction(transaction: Uint8Array): Promise<Uint8Array>;
@@ -24,6 +27,7 @@ export const unconfiguredAuth: FlayAuth = {
   authenticated: false,
   walletReady: false,
   walletAddress: null,
+  walletDelegated: false,
   identityToken: null,
   fiatOnrampEnvironment: 'sandbox',
   login() {
@@ -31,6 +35,12 @@ export const unconfiguredAuth: FlayAuth = {
   },
   async logout() {},
   async exportWallet() {
+    throw new Error('Privy is not configured.');
+  },
+  async delegateWalletForAgent() {
+    throw new Error('Privy is not configured.');
+  },
+  async revokeAgentWalletDelegation() {
     throw new Error('Privy is not configured.');
   },
   async signMessage() {

@@ -29,6 +29,8 @@ export const config = {
   commitment: 'confirmed' as const,
   privyAppId: clean(process.env.PRIVY_APP_ID) ?? clean(process.env.VITE_PRIVY_APP_ID),
   privyVerificationKey: clean(process.env.PRIVY_VERIFICATION_KEY)?.replace(/\\n/g, '\n'),
+  privyAppSecret: clean(process.env.PRIVY_APP_SECRET),
+  privyAuthorizationPrivateKey: clean(process.env.PRIVY_AUTHORIZATION_PRIVATE_KEY),
   privyFiatOnrampEnvironment: privyFiatOnrampEnvironment as 'sandbox' | 'production',
   jupiterApiKey: clean(process.env.JUPITER_API_KEY),
   jupiterBaseUrl: clean(process.env.JUPITER_BASE_URL) ?? 'https://api.jup.ag',
@@ -73,6 +75,7 @@ export function providerHeaders(includeJson = false): HeadersInit {
 export function serverReadiness() {
   return {
     privy: Boolean(config.privyAppId && config.privyVerificationKey),
+    privyAgentDelegation: Boolean(config.privyAppId && config.privyAppSecret && config.privyAuthorizationPrivateKey),
     jupiterSwap: true,
     // Trigger V1 currently accepts keyless requests; an API key only raises capacity.
     jupiterTrigger: true,

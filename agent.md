@@ -255,3 +255,43 @@ Do not declare this fix complete until the reported transaction is verified onch
 ### Acceptance-criteria result
 
 All five acceptance criteria and all six plan items pass. Confirmed Agent market transactions now refresh shared balances, enter Activity, and show their signature immediately while preserving the same exact-transaction review, server receipt checks, and user-controlled Privy signature.
+
+## Active plan: User-selectable Agent approval mode
+
+**Status:** implementation in progress
+
+**Scope:** let each Agent capability use either `Always ask`, where the user reviews and signs every request in Flay, or `Automatic within guardrails`, where a one-time Privy wallet delegation lets Flay execute the agent's supported trading intents without another UI visit
+
+### Authority and safety model
+
+The approval choice belongs to each capability and cannot be changed by the agent. `Always ask` preserves the current review queue. `Automatic within guardrails` is enabled only after the authenticated user completes Privy's one-time Solana wallet delegation and only while Flay's server-side Privy signer is configured. The bearer capability continues to submit structured Convert, xStocks, and Futures intents only. It never receives transaction bytes, a wallet signer, a Privy token, an authorization key, or a general RPC method.
+
+Flay must apply the same product, asset, market, USD, rolling daily, slippage, leverage, position-count, expiry, route, transaction-structure, simulation, and receipt checks before automatic signing. Fiat funding, wallet send, private-key export, message signing, MagicBlock access, arbitrary instructions, arbitrary program calls, approval-mode changes, and policy mutation remain absent from both REST and MCP capability surfaces. Revoking a capability stops it immediately; the wallet owner can also revoke Privy's delegated wallet access from the Flay UI.
+
+### Implementation blocks
+
+1. Extend shared Agent contracts and strict schemas with an immutable `always-ask | automatic` approval mode, request execution mode, automatic-execution status, and truthful workspace security/readiness fields. Keep existing callers backward-compatible by defaulting omitted mode to `always-ask` at the schema boundary.
+2. Add server configuration and a small Privy delegated-wallet signer adapter using `@privy-io/node`. It must require app ID, app secret, and a P-256 authorization private key; resolve the authenticated user's delegated Solana wallet ID from Privy; verify wallet ID, address, and chain before every signing action; and expose no raw signing endpoint.
+3. Store the delegated wallet ID only in the private credential record. Never return it through workspace, REST, MCP, logs, audit detail, or the one-time credential response. Reject automatic credential creation unless server signing is configured and Privy reports the exact embedded Solana wallet as delegated.
+4. Add a concurrency-safe automatic execution path to `AgentService.submit`. Reuse the existing risk checks, best-executable-route preparation, validated prepared transaction, provider execution, receipt verification, and completion record. Deduplicate simultaneous/idempotent retries so an intent can be executed at most once. Retryable provider failures remain visible and retryable without bypassing limits; terminal validation or authorization failures become failed requests.
+5. Support both execution shapes: server-side `signTransaction` followed by Flay's existing Jupiter/Futures executor, and Privy server-side sponsored `signAndSendTransaction` followed by Flay's existing sponsored receipt verifier for eligible Raydium/Orca market routes. Never skip simulation or semantic validation.
+6. Update REST and MCP results so `Always ask` clearly returns `humanApprovalRequired: true` and the UI review step, while automatic credentials return the actual completed, pending-retry, or failed state and transaction evidence. Do not claim funds moved unless Flay has an execution result.
+7. Add the approval-mode selector, one-time delegation flow, readiness/error copy, credential mode badges, automatic activity/history states, and delegated-access revocation control to the responsive Agent workspace. Keep the manual exact-review modal unchanged for `Always ask`. Reconcile successful automatic market transactions into balances and Activity when the workspace observes completion.
+8. Update health diagnostics and the root README with required environment variables, Privy Dashboard setup, one-time consent, mode behavior, revocation, MCP behavior, and the unchanged excluded authorities. Do not add another Markdown file.
+9. Add focused tests for schema defaults/strictness, unavailable signing configuration, wallet-ID/address validation, secret non-disclosure, successful automatic normal and sponsored execution, simultaneous and idempotent replay safety, provider failure recovery, revocation during execution, MCP truthfulness, fiat/general-wallet denial, manual-mode regression, and Agent UI mode/revocation copy.
+10. Run the complete build and test suite, release audit, high-severity production dependency audit, diff/secret/artifact checks, and a local production smoke test. Compare every implementation and acceptance item below against the final repository and append the evidence here before declaring completion.
+
+### Acceptance criteria
+
+1. A user can choose `Always ask` or `Automatic within guardrails` while creating a capability; the chosen mode is visible and immutable for that capability.
+2. `Always ask` continues to require authenticated UI review and a user Privy signature for every value-changing request.
+3. After one explicit Privy delegation, an automatic capability can execute a valid Convert, xStocks, Futures open, close, or cancel intent without the owner opening Flay again.
+4. Automatic execution uses the same live aggregation, exact prepared transaction, structure validation, simulation, receipt verification, guardrails, rolling limits, and audit trail as manual execution.
+5. A repeated or concurrent idempotency key cannot sign or submit twice, including while the first request is executing or after completion.
+6. Automatic creation and execution fail closed when server signer configuration is absent, delegation is missing/revoked, the Privy wallet ID does not resolve to the credential wallet, or provider validation fails.
+7. Revoking the capability immediately prevents new and retrying requests. The UI also provides a clear control to revoke Privy's wallet delegation and disables automatic capabilities before revocation is attempted.
+8. REST and MCP report whether human approval is required and whether execution completed. They never expose transaction bytes, signed transactions, wallet IDs, Privy secrets, identity tokens, or authorization material.
+9. Fiat onramp, arbitrary wallet sends, exports, message signing, MagicBlock, arbitrary program calls, policy mutation, and direct signer access remain unavailable to agent credentials and are covered by negative tests.
+10. No existing Convert, xStocks, Futures, Funds, wallet, MagicBlock, gasless, `Always ask`, or MCP discovery behavior regresses, and all required repository checks pass.
+
+Do not mark this block complete until all ten implementation items and all ten acceptance criteria are evidenced in a final plan-versus-code audit below this plan.

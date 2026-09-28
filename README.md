@@ -16,7 +16,7 @@ Flay is a public beta running on Solana mainnet. It does not custody user assets
 | Futures | Unified Phoenix and GMTrade markets, route comparison, reference candles, collateral controls, order review, positions, and recovery states |
 | Stocks | Official xStocks Solana catalog, Token-2022 scaled-share accounting, issuer reference data, and Jupiter execution |
 | Funds | Privy Card Onramps, wallet receive address, and a bounded USDC transfer flow |
-| AI agent access | Framework-neutral MCP and REST access with wallet-bound capabilities, product allowlists, USD/slippage/leverage limits, an approval queue, exact transaction review, and user-controlled Privy signing |
+| AI agent access | Framework-neutral MCP and REST access with wallet-bound capabilities, product allowlists, USD/slippage/leverage limits, and owner-selected `Always ask` or delegated automatic execution |
 | Gas sponsorship | Jupiter-managed sponsorship for eligible Jupiter swaps and Privy-managed sponsorship for eligible reviewed SPL swaps and USDC sends |
 | Activity | Wallet-bound transaction history and links to confirmed Solana transactions |
 
@@ -33,16 +33,17 @@ flowchart LR
     A --> F[Phoenix]
     A --> G[GMTrade Rust adapter]
     A --> X[xStocks]
-    A --> AI[Agent policy and approval queue]
+    A --> AI[Agent policy and execution controller]
     M[Any MCP-compatible agent] -->|Streamable HTTP + capability| AI
     A --> R[Solana RPC]
     C --> S[Solana mainnet]
     F --> S
     G --> S
     P --> S
+    AI -->|Validated delegated signing| P
 ```
 
-The server requests quotes, normalizes venue responses, builds transactions, validates their structure, and simulates the exact transaction where required. The browser presents the resulting provider, output, minimum received, fees, sponsorship status, and warnings. The user's Privy wallet remains the signer.
+The server requests quotes, normalizes venue responses, builds transactions, validates their structure, and simulates the exact transaction where required. In `Always ask`, the browser presents the provider, output, minimum received, fees, sponsorship status, and warnings before the user signs. In automatic mode, the user grants Privy wallet delegation once and Flay signs only the exact validated transactions allowed by that capability's guardrails.
 
 Futures candles are stable reference data rendered with TradingView Lightweight Charts. They are not presented as a venue's exact execution price. Phoenix and GMTrade retain their own collateral, funding, liquidation, and position models.
 
@@ -56,7 +57,7 @@ Futures candles are stable reference data rendered with TradingView Lightweight 
 - Sponsored flows accept only their reviewed transaction shape and verify the confirmed onchain result.
 - Provider secrets, identity tokens, signed transaction bytes, and private RPC credentials stay out of browser bundles and logs.
 - A provider outage disables affected new actions while preserving visible balances, positions, and recovery controls where cached state is available.
-- AI agent credentials are stored as SHA-256 hashes, expire automatically, and can only create bounded approval requests. They cannot access Privy signing, fiat funding, wallet export, transfers, or arbitrary program calls.
+- AI agent credentials are stored as SHA-256 hashes, expire automatically, and accept only bounded structured trading intents. The approval mode is immutable per credential. Agents never receive Privy signing access, wallet IDs, transaction bytes, identity tokens, fiat funding, wallet export, transfers, or arbitrary program calls.
 
 MagicBlock protected-balance functionality is isolated from third-party venues. It does not make Jupiter, Phoenix, GMTrade, or xStocks activity private; those transactions remain observable on Solana.
 
@@ -64,7 +65,14 @@ MagicBlock protected-balance functionality is isolated from third-party venues. 
 
 The **Agent access** workspace lets a signed-in user create a narrow capability for an external AI agent. The policy selects Convert, xStocks, and/or Futures, then limits tokens or markets, value per request, rolling 24-hour value, slippage, leverage, open positions, and credential lifetime.
 
-The credential can submit a structured intent to `POST /api/agent/requests`. It cannot obtain a signer or submit a transaction. Flay validates the intent against the policy and places it in the same Privy wallet's approval queue. The user opens the exact provider transaction, reviews its route and economic terms, and approves it with Privy. Rejecting or ignoring the request moves no funds; unsigned requests expire after 15 minutes.
+Each capability has one immutable approval mode:
+
+- **Always ask:** Flay validates the intent and places it in the wallet's approval queue. The user opens the exact provider transaction, reviews its route and economic terms, and approves it with Privy. Ignored requests expire after 15 minutes.
+- **Automatic within guardrails (shown as Full access):** the user first approves Privy's one-time wallet delegation. Flay then resolves the route, validates and simulates the exact transaction, rechecks the capability, asks Privy's server wallet API to sign it, submits it through the existing provider path, and verifies the result. The user does not need to keep Flay open or approve each action.
+
+Automatic mode means full access only to the selected Convert, xStocks, and Futures actions within the configured token/market allowlists, per-request value, rolling daily value, slippage, leverage, open-position, expiry, and request-rate limits. It does not authorize fiat onramp, wallet send, key export, message signing, MagicBlock, arbitrary transactions, arbitrary programs, or policy changes. The owner can revoke an individual capability or revoke all automatic wallet access from the Agent workspace.
+
+Revocation blocks new and retrying actions immediately. A transaction already submitted to Solana cannot be recalled; Privy's sponsored signing and broadcast is one atomic provider operation, so revocation cannot interrupt that operation after it has begun.
 
 ```sh
 export FLAY_AGENT_CREDENTIAL='copy-the-one-time-value-from-flay'
@@ -122,12 +130,12 @@ The MCP catalog is intentionally small:
 | `flay_get_tokens` | Read bounded public Solana token metadata |
 | `flay_get_stocks` | Read a bounded page of the public xStocks catalog |
 | `flay_get_futures_markets` | Read normalized public Phoenix and GMTrade market data |
-| `flay_request_convert` | Create a policy-checked Convert approval request |
-| `flay_request_stock_trade` | Create a policy-checked xStocks approval request |
-| `flay_request_futures_open` | Create a policy-checked Futures open request |
-| `flay_request_futures_manage` | Create a policy-checked Futures close or cancel request |
+| `flay_request_convert` | Submit a policy-checked Convert intent under the credential's approval mode |
+| `flay_request_stock_trade` | Submit a policy-checked xStocks intent under the credential's approval mode |
+| `flay_request_futures_open` | Submit a policy-checked Futures open intent under the credential's approval mode |
+| `flay_request_futures_manage` | Submit a policy-checked Futures close or cancel intent under the credential's approval mode |
 
-Proposal tools require a UUID idempotency key and return the request ID, status, expiry, and the explicit facts that no funds moved and human approval remains required. The user must open **Agent access** in Flay, review the exact prepared transaction, and sign it in Privy. There are no MCP tools for fiat funding, wallet sends, signing, transaction submission, key export, policy mutation, or arbitrary program instructions.
+Trading tools require a UUID idempotency key. For `Always ask`, they return the queued request and state that human approval is required. For automatic capabilities, the same call returns the completed or retryable execution state and transaction evidence; concurrent retries with the same key are coalesced and cannot sign or submit twice. There are no MCP tools for fiat funding, wallet sends, raw signing, arbitrary transaction submission, key export, policy mutation, or arbitrary program instructions.
 
 ## Technology
 
@@ -192,6 +200,8 @@ Copy [`apps/web/.env.example`](apps/web/.env.example) to `apps/web/.env`. The re
 | `VITE_PRIVY_APP_ID` | Yes | Public Privy application identifier used by the browser |
 | `PRIVY_APP_ID` | Yes | Matching server-side Privy application identifier |
 | `PRIVY_VERIFICATION_KEY` | Yes | Server-only Privy identity-token verification key |
+| `PRIVY_APP_SECRET` | Automatic agents only | Server-only Privy application secret used to resolve delegated wallets |
+| `PRIVY_AUTHORIZATION_PRIVATE_KEY` | Automatic agents only | Base64 PKCS8 P-256 private authorization key; never use a wallet private key or a `VITE_` variable |
 | `SOLANA_RPC_URL` | Yes | Primary Solana mainnet RPC |
 | `SOLANA_FALLBACK_RPC_URL` | No | Optional independent RPC fallback |
 | `VITE_PRIVY_ONRAMP_ENV` | Yes for funding | `sandbox` or `production`; embedded into the client build |
@@ -211,6 +221,7 @@ In the Privy dashboard:
 3. Enable embedded Solana wallets, user-owned wallet export, and identity tokens.
 4. Enable Card Onramps for production funding.
 5. Configure Solana mainnet fee sponsorship and billing before testing Privy-sponsored actions.
+6. To enable automatic agents, enable server-side wallet access/delegated actions, require signed wallet API requests, register the matching P-256 authorization public key, and set the app secret plus authorization private key only in the server environment.
 
 Gas sponsorship is dynamic. Flay labels an action sponsored only after validating the exact prepared transaction and its non-user fee payer. Native SOL wrapping, missing token accounts, venue setup rent, limit orders, and futures actions can still require wallet SOL.
 
@@ -262,8 +273,8 @@ The health response reports sanitized readiness for Privy, RPC, swap providers, 
 ## Product boundaries
 
 - Flay currently targets Solana mainnet only.
-- Users approve and sign their own transactions; confirmation and settlement still depend on Solana and the selected venue.
-- AI agents can propose only policy-approved trading intents. A human Privy signature is required for every value-changing action.
+- Users choose explicit per-action approval or one-time delegated authorization for bounded Agent execution; confirmation and settlement still depend on Solana and the selected venue.
+- AI agents can submit only policy-approved trading intents. `Always ask` requires a human Privy signature for every value-changing action; automatic mode requires one-time wallet delegation and then signs only Flay-validated transactions within the owner's guardrails.
 - Phoenix execution requires wallet onboarding and collateral setup before it becomes eligible.
 - GMTrade availability depends on the pinned sidecar and upstream GMTrade services.
 - xStocks are tokenized financial instruments, not direct equities. Availability and rights depend on the issuer and the user's jurisdiction.
@@ -271,4 +282,4 @@ The health response reports sanitized readiness for Privy, RPC, swap providers, 
 - Low-value trades may be uneconomic or impossible when network fees, token-account rent, venue minimums, or available liquidity exceed the wallet's usable balance.
 - Protected-balance integrations do not conceal public third-party trades or wallet funding on Solana.
 
-Flay is experimental software. Review every transaction, venue, fee, and risk disclosure before signing.
+Flay is experimental software. Review each capability's limits and every manually approved transaction, venue, fee, and risk disclosure before authorizing activity.

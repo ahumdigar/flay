@@ -4,6 +4,8 @@ import request from 'supertest';
 import { Client, StreamableHTTPClientTransport } from '@modelcontextprotocol/client';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { SOL_MINT, USDC_MINT } from '../../shared/constants.js';
+import type { AgentRequest } from '../../shared/agent.js';
+import { agentRequestResult } from './mcp.js';
 
 vi.mock('@privy-io/node', () => ({
   verifyIdentityToken: vi.fn().mockResolvedValue({
@@ -83,6 +85,28 @@ async function connect(credential: string) {
 }
 
 describe('Flay Streamable HTTP MCP', () => {
+  it('reports the owner-selected approval mode and actual automatic execution outcome', () => {
+    const result = agentRequestResult({
+      id: 'request-id', credentialId: 'credential-id', credentialName: 'Auto', wallet: SOL_MINT,
+      approvalMode: 'automatic', intent: { kind: 'convert', inputMint: USDC_MINT, outputMint: SOL_MINT, amountAtomic: '1000000', slippageBps: 50 },
+      riskUsd: '1000000', status: 'completed', createdAt: 1, expiresAt: 2, reviewedAt: 1, rejectedAt: null, failure: null,
+      execution: { signature: 'signature', status: 'confirmed', explorerUrl: 'https://explorer.invalid', provider: 'Jupiter', completedAt: 2 },
+    } satisfies AgentRequest);
+    expect(result.structuredContent).toMatchObject({ fundsMoved: true, humanApprovalRequired: false, request: { approvalMode: 'automatic', status: 'completed' } });
+  });
+
+  it('never claims funds moved when automatic execution is pending or failed', () => {
+    for (const status of ['pending', 'failed'] as const) {
+      const result = agentRequestResult({
+        id: `request-${status}`, credentialId: 'credential-id', credentialName: 'Auto', wallet: SOL_MINT,
+        approvalMode: 'automatic', intent: { kind: 'convert', inputMint: USDC_MINT, outputMint: SOL_MINT, amountAtomic: '1000000', slippageBps: 50 },
+        riskUsd: '1000000', status, createdAt: 1, expiresAt: 2, reviewedAt: status === 'failed' ? 1 : null,
+        rejectedAt: null, failure: 'Provider unavailable.', execution: null,
+      } satisfies AgentRequest);
+      expect(result.structuredContent).toMatchObject({ fundsMoved: false, humanApprovalRequired: false, request: { status, execution: null } });
+    }
+  });
+
   it('initializes with the official client, lists only narrow tools, and queues a human-approved proposal', async () => {
     const { credential } = await createCapability();
     const client = await connect(credential);

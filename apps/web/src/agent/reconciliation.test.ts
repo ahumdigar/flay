@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import type { AgentExecutionResponse, AgentReviewResponse } from '../../shared/agent.js';
+import type { AgentExecutionResponse, AgentRequest, AgentReviewResponse } from '../../shared/agent.js';
 import type { PreparedTransaction } from '../../shared/types.js';
-import { agentMarketActivity, mergeStoredActivity, type StoredActivity } from './reconciliation.js';
+import { agentMarketActivity, automaticAgentMarketActivity, mergeStoredActivity, type StoredActivity } from './reconciliation.js';
 
 function completion(kind: 'convert' | 'stock' = 'convert') {
   const prepared = {
@@ -59,5 +59,20 @@ describe('Agent transaction reconciliation', () => {
     expect(next).toHaveLength(50);
     expect(next[0]).toMatchObject({ signature: 'signature-10', provider: 'Updated' });
     expect(next.filter((item) => item.signature === 'signature-10')).toHaveLength(1);
+  });
+
+  it('reconciles automatic market execution summaries without transaction bytes', () => {
+    const request = {
+      status: 'completed',
+      approvalMode: 'automatic',
+      execution: {
+        signature: 'automatic-signature', provider: 'Raydium', status: 'confirmed', explorerUrl: 'https://explorer.invalid', completedAt: 456,
+        marketActivity: { kind: 'Market', gasPayment: { mode: 'provider-sponsored', provider: 'Privy' } },
+      },
+    } as AgentRequest;
+    expect(automaticAgentMarketActivity(request)).toEqual({
+      signature: 'automatic-signature', kind: 'Market', provider: 'Raydium', createdAt: 456,
+      gasPayment: { mode: 'provider-sponsored', provider: 'Privy' },
+    });
   });
 });

@@ -13,7 +13,7 @@ These rules apply to every implementation session in this repository.
 ## Product integrity
 
 - Use live provider and onchain data. Never silently substitute illustrative quotes, balances, activity, candles, positions, orders, transactions, or fiat status.
-- Users sign their own Solana transactions. Flay must never receive or store an embedded-wallet private key.
+- Users choose how Solana transactions are authorized. `Always ask` uses the user's Privy signature each time; automatic Agent execution requires explicit wallet delegation and remains bounded by the user's immutable capability policy. Flay must never receive or store an embedded-wallet private key.
 - Bind state-changing requests and prepared transactions to the authenticated wallet and reviewed intent.
 - Validate provider-built transactions before signature and revalidate or simulate them before execution where required.
 - Keep provider secrets, identity tokens, signed transactions, private RPC URLs, and request bodies out of client bundles, Git, and logs.

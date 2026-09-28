@@ -39,7 +39,7 @@ import {
   type ReactNode,
 } from 'react';
 import { atomicToDecimal, decimalToAtomic } from '../shared/amounts';
-import type { AgentExecutionResponse, AgentReviewResponse } from '../shared/agent';
+import type { AgentExecutionResponse, AgentRequest, AgentReviewResponse } from '../shared/agent';
 import { CORE_TOKEN_MINTS, SOL_MINT } from '../shared/constants';
 import { scaledAtomicToDecimal } from '../shared/stock-amounts';
 import type {
@@ -69,7 +69,7 @@ import FuturesPage from './futures/FuturesPage';
 import FundsPage from './fiat/FundsPage';
 import StocksPage from './stocks/StocksPage';
 import AgentPage from './agent/AgentPage';
-import { agentMarketActivity, mergeStoredActivity, type StoredActivity } from './agent/reconciliation';
+import { agentMarketActivity, automaticAgentMarketActivity, mergeStoredActivity, type StoredActivity } from './agent/reconciliation';
 
 type Modal = 'wallet' | 'magicblock' | 'magic-review' | 'magic-success' | 'settings' | 'token' | 'review' | 'success' | 'setup' | null;
 type Side = 'from' | 'to';
@@ -973,6 +973,13 @@ function App({ auth }: { auth: FlayAuth }) {
     setBalanceNonce((value) => value + 1);
     window.setTimeout(() => setBalanceNonce((value) => value + 1), 1_500);
   }, [auth.walletAddress]);
+  const reconcileAutomaticAgentTransaction = useCallback((request: AgentRequest) => {
+    if (!auth.walletAddress) return;
+    const activity = automaticAgentMarketActivity(request);
+    if (activity) writeStoredActivity(auth.walletAddress, activity);
+    setBalanceNonce((value) => value + 1);
+    window.setTimeout(() => setBalanceNonce((value) => value + 1), 1_500);
+  }, [auth.walletAddress]);
 
   return (
     <div className="app-shell">
@@ -1188,7 +1195,7 @@ function App({ auth }: { auth: FlayAuth }) {
         ) : view === 'funds' ? (
           <FundsPage auth={auth} balances={visibleBalances} onBalanceRefresh={refreshBalances} />
         ) : view === 'agent' ? (
-          <AgentPage auth={auth} onTransactionCompleted={reconcileAgentTransaction} />
+          <AgentPage auth={auth} onTransactionCompleted={reconcileAgentTransaction} onAutomaticTransactionCompleted={reconcileAutomaticAgentTransaction} />
         ) : (
           <ActivityPage
             authenticated={auth.authenticated}

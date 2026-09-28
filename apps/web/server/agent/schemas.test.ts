@@ -6,7 +6,7 @@ const wallet = SOL_MINT;
 
 describe('agent request contracts', () => {
   it('accepts a bounded trading policy', () => {
-    expect(agentPolicySchema.safeParse({
+    const parsed = agentPolicySchema.safeParse({
       wallet,
       name: 'My agent',
       products: ['convert', 'futures'],
@@ -19,7 +19,29 @@ describe('agent request contracts', () => {
       allowedStockSymbols: [],
       allowedFuturesMarkets: ['SOL-PERP'],
       expiresInHours: 24,
-    }).success).toBe(true);
+    });
+    expect(parsed.success).toBe(true);
+    if (parsed.success) expect(parsed.data.approvalMode).toBe('always-ask');
+  });
+
+  it('accepts only the two explicit approval modes and rejects hidden policy fields', () => {
+    const valid = {
+      wallet,
+      name: 'My agent',
+      products: ['convert'],
+      maxTransactionUsd: 25,
+      maxDailyUsd: 100,
+      maxSlippageBps: 50,
+      maxFuturesLeverage: 3,
+      maxOpenFuturesPositions: 2,
+      allowedTokenMints: [SOL_MINT, USDC_MINT],
+      allowedStockSymbols: [],
+      allowedFuturesMarkets: [],
+      expiresInHours: 24,
+    };
+    expect(agentPolicySchema.safeParse({ ...valid, approvalMode: 'automatic' }).success).toBe(true);
+    expect(agentPolicySchema.safeParse({ ...valid, approvalMode: 'unrestricted' }).success).toBe(false);
+    expect(agentPolicySchema.safeParse({ ...valid, approvalMode: 'automatic', allowFiat: true }).success).toBe(false);
   });
 
   it('rejects a daily limit below the per-request limit', () => {
