@@ -2,20 +2,21 @@ import { PublicKey } from '@solana/web3.js';
 import { z } from 'zod';
 import { MAX_SLIPPAGE_BPS, MIN_SLIPPAGE_BPS } from '../../shared/constants.js';
 
-const publicKey = z.string().min(32).max(44).refine((value) => {
+export const agentPublicKeySchema = z.string().min(32).max(44).refine((value) => {
   try { return new PublicKey(value).toBase58() === value; } catch { return false; }
 }, 'Invalid Solana address.');
 
-const atomicAmount = z.string().regex(/^[1-9]\d*$/).refine(
+export const agentAtomicAmountSchema = z.string().regex(/^[1-9]\d*$/).refine(
   (value) => !/^[1-9]\d*$/.test(value) || BigInt(value) <= 18_446_744_073_709_551_615n,
   'Amount exceeds the Solana u64 limit.',
 );
 
-const stockSymbol = z.string().trim().toUpperCase().min(2).max(24).regex(/^[A-Z0-9.]+$/);
-const futuresMarket = z.enum(['SOL-PERP', 'BTC-PERP', 'ETH-PERP']);
+export const agentStockSymbolSchema = z.string().trim().toUpperCase().min(2).max(24).regex(/^[A-Z0-9.]+$/);
+export const agentFuturesMarketSchema = z.enum(['SOL-PERP', 'BTC-PERP', 'ETH-PERP']);
+export const agentStockAmountSchema = z.string().trim().regex(/^(?:0|[1-9]\d*)(?:\.\d{1,18})?$/).refine((value) => Number(value) > 0);
 
 export const agentPolicySchema = z.object({
-  wallet: publicKey,
+  wallet: agentPublicKeySchema,
   name: z.string().trim().min(2).max(60),
   products: z.array(z.enum(['convert', 'stocks', 'futures'])).min(1).max(3).transform((items) => [...new Set(items)]),
   maxTransactionUsd: z.number().finite().min(1).max(1_000_000),
@@ -23,9 +24,9 @@ export const agentPolicySchema = z.object({
   maxSlippageBps: z.number().int().min(MIN_SLIPPAGE_BPS).max(MAX_SLIPPAGE_BPS),
   maxFuturesLeverage: z.number().int().min(1).max(10),
   maxOpenFuturesPositions: z.number().int().min(1).max(20),
-  allowedTokenMints: z.array(publicKey).max(100).transform((items) => [...new Set(items)]),
-  allowedStockSymbols: z.array(stockSymbol).max(100).transform((items) => [...new Set(items)]),
-  allowedFuturesMarkets: z.array(futuresMarket).max(3).transform((items) => [...new Set(items)]),
+  allowedTokenMints: z.array(agentPublicKeySchema).max(100).transform((items) => [...new Set(items)]),
+  allowedStockSymbols: z.array(agentStockSymbolSchema).max(100).transform((items) => [...new Set(items)]),
+  allowedFuturesMarkets: z.array(agentFuturesMarketSchema).max(3).transform((items) => [...new Set(items)]),
   expiresInHours: z.number().int().min(1).max(24 * 30),
 }).strict().superRefine((value, context) => {
   if (value.maxDailyUsd < value.maxTransactionUsd) {
@@ -44,28 +45,28 @@ export const agentPolicySchema = z.object({
 
 const convertIntent = z.object({
   kind: z.literal('convert'),
-  inputMint: publicKey,
-  outputMint: publicKey,
-  amountAtomic: atomicAmount,
+  inputMint: agentPublicKeySchema,
+  outputMint: agentPublicKeySchema,
+  amountAtomic: agentAtomicAmountSchema,
   slippageBps: z.number().int().min(MIN_SLIPPAGE_BPS).max(MAX_SLIPPAGE_BPS),
 }).strict().refine((value) => value.inputMint !== value.outputMint, { path: ['outputMint'], message: 'Choose different tokens.' });
 
 const stockIntent = z.object({
   kind: z.literal('stock'),
-  symbol: stockSymbol,
+  symbol: agentStockSymbolSchema,
   side: z.enum(['buy', 'sell']),
-  amount: z.string().trim().regex(/^(?:0|[1-9]\d*)(?:\.\d{1,18})?$/).refine((value) => Number(value) > 0),
+  amount: agentStockAmountSchema,
   slippageBps: z.number().int().min(MIN_SLIPPAGE_BPS).max(MAX_SLIPPAGE_BPS),
 }).strict();
 
 const futuresOpenIntent = z.object({
   kind: z.literal('futures-open'),
-  market: futuresMarket,
+  market: agentFuturesMarketSchema,
   side: z.enum(['long', 'short']),
   orderType: z.enum(['market', 'limit']),
-  collateralAtomic: atomicAmount.refine((value) => BigInt(value) >= 1_000_000n, 'Minimum collateral is 1 USDC.'),
+  collateralAtomic: agentAtomicAmountSchema.refine((value) => BigInt(value) >= 1_000_000n, 'Minimum collateral is 1 USDC.'),
   leverageBps: z.number().int().min(10_000).max(100_000),
-  limitPriceMicroUsd: atomicAmount.optional(),
+  limitPriceMicroUsd: agentAtomicAmountSchema.optional(),
   slippageBps: z.number().int().min(1).max(500),
   routeChoice: z.enum(['auto', 'phoenix', 'gmtrade']),
 }).strict().superRefine((value, context) => {
@@ -77,7 +78,7 @@ const futuresManageIntent = z.object({
   kind: z.literal('futures-manage'),
   action: z.enum(['close', 'cancel']),
   venue: z.enum(['phoenix', 'gmtrade']),
-  market: futuresMarket,
+  market: agentFuturesMarketSchema,
   nativeId: z.string().min(1).max(128),
 }).strict();
 
@@ -86,17 +87,17 @@ export const agentIntentSubmissionSchema = z.object({
   intent: z.discriminatedUnion('kind', [convertIntent, stockIntent, futuresOpenIntent, futuresManageIntent]),
 }).strict();
 
-export const agentRequestActionSchema = z.object({ wallet: publicKey }).strict();
+export const agentRequestActionSchema = z.object({ wallet: agentPublicKeySchema }).strict();
 
 export const agentExecuteSchema = z.object({
-  wallet: publicKey,
+  wallet: agentPublicKeySchema,
   signedTransaction: z.string().min(100).max(20_000).regex(/^[A-Za-z0-9+/]+={0,2}$/),
   idempotencyKey: z.string().uuid(),
 }).strict();
 
 export const agentSponsoredCompleteSchema = z.object({
-  wallet: publicKey,
+  wallet: agentPublicKeySchema,
   signature: z.string().min(80).max(90).regex(/^[1-9A-HJ-NP-Za-km-z]+$/),
 }).strict();
 
-export const agentWorkspaceSchema = z.object({ wallet: publicKey }).strict();
+export const agentWorkspaceSchema = z.object({ wallet: agentPublicKeySchema }).strict();

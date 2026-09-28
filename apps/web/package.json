@@ -21,6 +21,8 @@
     "@fontsource-variable/dm-sans": "^5.2.8",
     "@fontsource-variable/sora": "^5.2.8",
     "@magicblock-labs/ephemeral-rollups-sdk": "0.17.2",
+    "@modelcontextprotocol/node": "2.1.0",
+    "@modelcontextprotocol/server": "2.1.0",
     "@orca-so/common-sdk": "^0.7.1",
     "@orca-so/whirlpools-sdk": "^0.22.0",
     "@privy-io/node": "^0.34.0",
@@ -45,6 +47,7 @@
     "zod": "^4.6.5"
   },
   "devDependencies": {
+    "@modelcontextprotocol/client": "2.1.0",
     "@types/bn.js": "^5.2.0",
     "@types/express": "^5.0.6",
     "@types/node": "^26.5.1",

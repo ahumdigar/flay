@@ -100,7 +100,7 @@ export class AgentStore {
     };
   }
 
-  authenticate(raw: string | undefined): CredentialRecord {
+  authenticate(raw: string | undefined, consumeRateLimit = true): CredentialRecord {
     if (!raw || raw.length > 256) throw new AppError(401, 'AGENT_CREDENTIAL_REQUIRED', 'Provide an agent capability credential.');
     const match = raw.match(CREDENTIAL_PATTERN);
     if (!match) throw new AppError(401, 'AGENT_CREDENTIAL_INVALID', 'The agent capability credential is invalid.');
@@ -112,7 +112,7 @@ export class AgentStore {
     const currentStatus = status(record);
     if (currentStatus === 'revoked') throw new AppError(401, 'AGENT_CREDENTIAL_REVOKED', 'This agent capability was revoked.');
     if (currentStatus === 'expired') throw new AppError(401, 'AGENT_CREDENTIAL_EXPIRED', 'This agent capability expired.');
-    this.consumeRateLimit(record.id);
+    if (consumeRateLimit) this.consumeRateLimit(record.id);
     return record;
   }
 

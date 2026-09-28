@@ -69,6 +69,15 @@ export class AgentService {
     return this.store.revoke(userId, wallet, id);
   }
 
+  authorizeCapability(rawCredential: string | undefined) {
+    const credential = this.store.authenticate(rawCredential, false);
+    return {
+      id: credential.id,
+      expiresAt: credential.expiresAt,
+      products: [...credential.products],
+    };
+  }
+
   async submit(rawCredential: string | undefined, submission: AgentIntentSubmission) {
     const credential = this.store.authenticate(rawCredential);
     const policy = this.store.policy(credential);

@@ -1,0 +1,354 @@
+import { createMcpHandler, McpServer, type CallToolResult } from '@modelcontextprotocol/server';
+import { toNodeHandler } from '@modelcontextprotocol/node';
+import type { Request, Response, Router } from 'express';
+import { z } from 'zod';
+import type { AgentIntentSubmission, AgentRequest } from '../../shared/agent.js';
+import { asAppError } from '../errors.js';
+import type { FuturesService } from '../futures/futures-service.js';
+import type { StockService } from '../stocks-service.js';
+import type { TokenService } from '../tokens.js';
+import type { AgentService } from './service.js';
+import {
+  agentAtomicAmountSchema,
+  agentFuturesMarketSchema,
+  agentPublicKeySchema,
+  agentStockAmountSchema,
+  agentStockSymbolSchema,
+} from './schemas.js';
+
+const MCP_BODY_LIMIT = 48 * 1024;
+const MCP_REQUESTS_PER_MINUTE = 120;
+const MAX_MCP_RATE_BUCKETS = 2_000;
+
+const readOnlyAnnotations = {
+  readOnlyHint: true,
+  destructiveHint: false,
+  idempotentHint: true,
+  openWorldHint: true,
+} as const;
+
+const proposalAnnotations = {
+  readOnlyHint: false,
+  destructiveHint: true,
+  idempotentHint: false,
+  openWorldHint: true,
+} as const;
+
+interface McpDependencies {
+  agents: AgentService;
+  tokens: TokenService;
+  stocks: StockService;
+  futures: FuturesService;
+}
+
+interface RateBucket {
+  count: number;
+  resetAt: number;
+}
+
+function safeResult(payload: Record<string, unknown>): CallToolResult {
+  return {
+    content: [{ type: 'text', text: JSON.stringify(payload) }],
+    structuredContent: payload,
+  };
+}
+
+function safeToolError(error: unknown): CallToolResult {
+  const appError = asAppError(error, 'MCP_TOOL_FAILED');
+  const payload = {
+    ok: false,
+    error: {
+      code: appError.code,
+      message: appError.message,
+      retryable: appError.retryable,
+    },
+  };
+  return {
+    isError: true,
+    content: [{ type: 'text', text: JSON.stringify(payload) }],
+    structuredContent: payload,
+  };
+}
+
+function approvalResult(request: AgentRequest): CallToolResult {
+  return safeResult({
+    ok: true,
+    request: {
+      id: request.id,
+      status: request.status,
+      kind: request.intent.kind,
+      riskMicroUsd: request.riskUsd,
+      createdAt: request.createdAt,
+      expiresAt: request.expiresAt,
+    },
+    fundsMoved: false,
+    humanApprovalRequired: true,
+    nextStep: 'Ask the user to open Flay → Agent access, review the exact provider transaction, and approve it in Privy before this request expires.',
+  });
+}
+
+function registerReadTools(server: McpServer, dependencies: McpDependencies) {
+  server.registerTool('flay_get_tokens', {
+    title: 'Search Flay tokens',
+    description: 'Search verified Solana token metadata before constructing a Convert proposal. Returns at most 20 results. This tool never reads a wallet or moves funds.',
+    inputSchema: z.object({
+      query: z.string().trim().min(1).max(64).describe('Token symbol, name, or exact Solana mint address.'),
+    }).strict(),
+    annotations: readOnlyAnnotations,
+  }, async ({ query }) => {
+    try {
+      const tokens = (await dependencies.tokens.search(query)).slice(0, 20).map((token) => ({
+        mint: token.mint,
+        symbol: token.symbol,
+        name: token.name,
+        decimals: token.decimals,
+        tokenProgram: token.tokenProgram,
+        verified: token.verified,
+        tradable: token.tradable,
+        blockedReason: token.blockedReason,
+        usdPrice: token.usdPrice,
+      }));
+      return safeResult({ ok: true, count: tokens.length, tokens });
+    } catch (error) {
+      return safeToolError(error);
+    }
+  });
+
+  server.registerTool('flay_get_stocks', {
+    title: 'Browse Flay xStocks',
+    description: 'Browse a bounded page of official xStocks symbols before constructing a stock proposal. This tool never reads a wallet or moves funds.',
+    inputSchema: z.object({
+      query: z.string().trim().max(64).optional().describe('Optional symbol, underlying symbol, or company-name filter.'),
+      offset: z.number().int().min(0).max(10_000).default(0).describe('Zero-based result offset.'),
+      limit: z.number().int().min(1).max(50).default(20).describe('Maximum results, capped at 50.'),
+    }).strict(),
+    annotations: readOnlyAnnotations,
+  }, async ({ query, offset, limit }) => {
+    try {
+      const catalog = await dependencies.stocks.catalog();
+      const needle = query?.toUpperCase();
+      const matches = needle
+        ? catalog.assets.filter((asset) => `${asset.symbol} ${asset.underlyingSymbol} ${asset.name}`.toUpperCase().includes(needle))
+        : catalog.assets;
+      const assets = matches.slice(offset, offset + limit).map((asset) => ({
+        symbol: asset.symbol,
+        underlyingSymbol: asset.underlyingSymbol,
+        name: asset.name,
+        mint: asset.mint,
+        currency: asset.currency,
+        exchange: asset.exchange,
+        isTradingHalted: asset.isTradingHalted,
+        supportsAtomicSwaps: asset.supportsAtomicSwaps,
+        referencePrice: asset.referencePrice,
+      }));
+      return safeResult({
+        ok: true,
+        provider: catalog.provider,
+        status: catalog.status,
+        directoryComplete: catalog.directoryComplete,
+        totalMatches: matches.length,
+        offset,
+        count: assets.length,
+        hasMore: offset + assets.length < matches.length,
+        assets,
+        warning: catalog.warning,
+      });
+    } catch (error) {
+      return safeToolError(error);
+    }
+  });
+
+  server.registerTool('flay_get_futures_markets', {
+    title: 'List Flay futures markets',
+    description: 'List active Phoenix and GMTrade perpetual markets and bounded public routing data before constructing a Futures proposal. This tool never reads a wallet or moves funds.',
+    inputSchema: z.object({}).strict(),
+    annotations: readOnlyAnnotations,
+  }, async () => {
+    try {
+      const result = await dependencies.futures.markets();
+      const markets = result.markets.slice(0, 20).map((market) => ({
+        symbol: market.symbol,
+        displayName: market.displayName,
+        baseSymbol: market.baseSymbol,
+        quoteSymbol: market.quoteSymbol,
+        activeVenues: market.activeVenues,
+        venues: Object.fromEntries(Object.entries(market.venues).map(([venue, details]) => [venue, details ? {
+          active: details.active,
+          markPriceMicroUsd: details.markPriceMicroUsd,
+          maximumLeverageBps: details.maximumLeverageBps,
+          openingFeeBps: details.openingFeeBps,
+          fundingRateBpsHourly: details.fundingRateBpsHourly,
+          unavailableReason: details.unavailableReason,
+          fetchedAt: details.fetchedAt,
+        } : null])),
+      }));
+      return safeResult({ ok: true, count: markets.length, markets, venueReadiness: result.venueReadiness, fetchedAt: result.fetchedAt });
+    } catch (error) {
+      return safeToolError(error);
+    }
+  });
+}
+
+function registerProposalTools(server: McpServer, dependencies: McpDependencies, credential: string) {
+  async function submit(input: AgentIntentSubmission) {
+    try {
+      return approvalResult(await dependencies.agents.submit(credential, input));
+    } catch (error) {
+      return safeToolError(error);
+    }
+  }
+
+  server.registerTool('flay_request_convert', {
+    title: 'Request a Flay conversion',
+    description: 'Create a policy-checked Convert proposal for the credential-bound wallet. amountAtomic is the exact raw input amount using the input mint decimals. No funds move until the user reviews and signs in Privy.',
+    inputSchema: z.object({
+      idempotencyKey: z.string().uuid().describe('A new UUID for a new proposal. Reuse the same UUID only when retrying the identical proposal.'),
+      inputMint: agentPublicKeySchema.describe('Allowed Solana input mint.'),
+      outputMint: agentPublicKeySchema.describe('Allowed Solana output mint.'),
+      amountAtomic: agentAtomicAmountSchema.describe('Exact raw input amount in the input mint atomic units.'),
+      slippageBps: z.number().int().min(1).max(500).describe('Maximum slippage in basis points; 50 means 0.50%.'),
+    }).strict().refine((value) => value.inputMint !== value.outputMint, { path: ['outputMint'], message: 'Choose different tokens.' }),
+    annotations: proposalAnnotations,
+  }, (input) => submit({ idempotencyKey: input.idempotencyKey, intent: { kind: 'convert', inputMint: input.inputMint, outputMint: input.outputMint, amountAtomic: input.amountAtomic, slippageBps: input.slippageBps } }));
+
+  server.registerTool('flay_request_stock_trade', {
+    title: 'Request an xStocks trade',
+    description: 'Create a policy-checked xStocks buy or sell proposal. For buys, amount is display USDC; for sells, amount is display xStock units. No funds move until the user reviews and signs in Privy.',
+    inputSchema: z.object({
+      idempotencyKey: z.string().uuid().describe('A new UUID for a new proposal. Reuse it only for an identical retry.'),
+      symbol: agentStockSymbolSchema.describe('Allowed official xStocks provider symbol, for example AAPLX.'),
+      side: z.enum(['buy', 'sell']),
+      amount: agentStockAmountSchema.describe('Display USDC amount for buy or display xStock units for sell.'),
+      slippageBps: z.number().int().min(1).max(500).describe('Maximum slippage in basis points.'),
+    }).strict(),
+    annotations: proposalAnnotations,
+  }, (input) => submit({ idempotencyKey: input.idempotencyKey, intent: { kind: 'stock', symbol: input.symbol, side: input.side, amount: input.amount, slippageBps: input.slippageBps } }));
+
+  server.registerTool('flay_request_futures_open', {
+    title: 'Request a Futures position',
+    description: 'Create a policy-checked Phoenix/GMTrade perpetual proposal. collateralAtomic uses six-decimal USDC atomic units and leverageBps uses 10000 per 1×. No position opens until the user reviews and signs in Privy.',
+    inputSchema: z.object({
+      idempotencyKey: z.string().uuid().describe('A new UUID for a new proposal. Reuse it only for an identical retry.'),
+      market: agentFuturesMarketSchema,
+      side: z.enum(['long', 'short']),
+      orderType: z.enum(['market', 'limit']),
+      collateralAtomic: agentAtomicAmountSchema.refine((value) => BigInt(value) >= 1_000_000n, 'Minimum collateral is 1 USDC.').describe('USDC collateral in six-decimal atomic units; 1000000 means 1 USDC.'),
+      leverageBps: z.number().int().min(10_000).max(100_000).describe('Leverage in basis points; 30000 means 3×.'),
+      limitPriceMicroUsd: agentAtomicAmountSchema.optional().describe('Required only for limit orders; USD price in six-decimal micro-USD.'),
+      slippageBps: z.number().int().min(1).max(500).describe('Maximum slippage in basis points.'),
+      routeChoice: z.enum(['auto', 'phoenix', 'gmtrade']).default('auto').describe('Use auto for Flay best-route selection or name an allowed venue.'),
+    }).strict().superRefine((value, context) => {
+      if (value.orderType === 'limit' && !value.limitPriceMicroUsd) context.addIssue({ code: 'custom', path: ['limitPriceMicroUsd'], message: 'Limit price is required.' });
+      if (value.orderType === 'market' && value.limitPriceMicroUsd) context.addIssue({ code: 'custom', path: ['limitPriceMicroUsd'], message: 'Market orders cannot include a limit price.' });
+    }),
+    annotations: proposalAnnotations,
+  }, (input) => submit({
+    idempotencyKey: input.idempotencyKey,
+    intent: {
+      kind: 'futures-open', market: input.market, side: input.side, orderType: input.orderType,
+      collateralAtomic: input.collateralAtomic, leverageBps: input.leverageBps,
+      ...(input.limitPriceMicroUsd ? { limitPriceMicroUsd: input.limitPriceMicroUsd } : {}),
+      slippageBps: input.slippageBps, routeChoice: input.routeChoice,
+    },
+  }));
+
+  server.registerTool('flay_request_futures_manage', {
+    title: 'Request a Futures close or cancel',
+    description: 'Create a policy-checked request to close an existing position or cancel an existing order using its exact provider native ID. No action executes until the user reviews and signs in Privy.',
+    inputSchema: z.object({
+      idempotencyKey: z.string().uuid().describe('A new UUID for a new proposal. Reuse it only for an identical retry.'),
+      action: z.enum(['close', 'cancel']),
+      venue: z.enum(['phoenix', 'gmtrade']),
+      market: agentFuturesMarketSchema,
+      nativeId: z.string().min(1).max(128).describe('Exact venue position ID for close or order ID for cancel.'),
+    }).strict(),
+    annotations: proposalAnnotations,
+  }, (input) => submit({ idempotencyKey: input.idempotencyKey, intent: { kind: 'futures-manage', action: input.action, venue: input.venue, market: input.market, nativeId: input.nativeId } }));
+}
+
+function createFlayMcpServer(dependencies: McpDependencies, credential: string) {
+  const server = new McpServer({ name: 'flay', version: '1.0.0' });
+  registerReadTools(server, dependencies);
+  registerProposalTools(server, dependencies, credential);
+  return server;
+}
+
+function bearerCredential(request: Request): string | undefined {
+  const value = request.header('authorization');
+  const match = value?.match(/^Bearer ([^\s]{1,256})$/i);
+  return match?.[1];
+}
+
+function requestOriginAllowed(request: Request): boolean {
+  const origin = request.header('origin');
+  if (!origin) return true;
+  try {
+    return new URL(origin).host === request.get('host');
+  } catch {
+    return false;
+  }
+}
+
+function rpcError(response: Response, status: number, code: number, message: string, dataCode: string, retryable = false) {
+  if (status === 401) response.setHeader('www-authenticate', 'Bearer realm="Flay MCP"');
+  response.status(status).json({ jsonrpc: '2.0', error: { code, message, data: { code: dataCode, retryable } }, id: null });
+}
+
+export function mountAgentMcp(router: Router, dependencies: McpDependencies) {
+  const buckets = new Map<string, RateBucket>();
+  const handler = createMcpHandler((context) => createFlayMcpServer(dependencies, context.authInfo?.token ?? ''), {
+    legacy: 'stateless',
+    responseMode: 'json',
+    maxRequestBodySize: MCP_BODY_LIMIT,
+    maxSubscriptions: 0,
+    keepAliveMs: 0,
+  });
+  const nodeHandler = toNodeHandler(handler, { maxRequestBodySize: MCP_BODY_LIMIT });
+
+  router.all('/mcp', async (request, response) => {
+    if (!requestOriginAllowed(request)) {
+      rpcError(response, 403, -32_000, 'Origin rejected.', 'ORIGIN_REJECTED');
+      return;
+    }
+    const rawCredential = bearerCredential(request);
+    let principal: ReturnType<AgentService['authorizeCapability']>;
+    try {
+      principal = dependencies.agents.authorizeCapability(rawCredential);
+    } catch (error) {
+      const appError = asAppError(error, 'MCP_AUTH_FAILED');
+      rpcError(response, appError.status, -32_001, appError.message, appError.code, appError.retryable);
+      return;
+    }
+
+    const now = Date.now();
+    if (!buckets.has(principal.id) && buckets.size >= MAX_MCP_RATE_BUCKETS) {
+      for (const [key, bucket] of buckets) if (bucket.resetAt <= now) buckets.delete(key);
+      if (buckets.size >= MAX_MCP_RATE_BUCKETS) buckets.delete(buckets.keys().next().value!);
+    }
+    const current = buckets.get(principal.id);
+    const bucket = !current || current.resetAt <= now ? { count: 0, resetAt: now + 60_000 } : current;
+    bucket.count += 1;
+    buckets.set(principal.id, bucket);
+    response.setHeader('x-ratelimit-limit', String(MCP_REQUESTS_PER_MINUTE));
+    response.setHeader('x-ratelimit-remaining', String(Math.max(0, MCP_REQUESTS_PER_MINUTE - bucket.count)));
+    if (bucket.count > MCP_REQUESTS_PER_MINUTE) {
+      rpcError(response, 429, -32_029, 'Too many MCP requests. Wait one minute.', 'MCP_RATE_LIMITED', true);
+      return;
+    }
+
+    if (!['POST', 'GET', 'DELETE'].includes(request.method)) {
+      response.setHeader('allow', 'POST, GET, DELETE');
+      rpcError(response, 405, -32_000, 'Method not allowed.', 'MCP_METHOD_NOT_ALLOWED');
+      return;
+    }
+
+    const authenticatedRequest = request as Request & { auth?: { token: string; clientId: string; scopes: string[]; expiresAt: number } };
+    authenticatedRequest.auth = {
+      token: rawCredential!,
+      clientId: `flay-agent:${principal.id}`,
+      scopes: ['flay:discover', ...principal.products.map((product) => `flay:request:${product}`)],
+      expiresAt: Math.floor(principal.expiresAt / 1_000),
+    };
+    await nodeHandler(authenticatedRequest, response);
+  });
+}

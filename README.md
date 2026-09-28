@@ -16,7 +16,7 @@ Flay is a public beta running on Solana mainnet. It does not custody user assets
 | Futures | Unified Phoenix and GMTrade markets, route comparison, reference candles, collateral controls, order review, positions, and recovery states |
 | Stocks | Official xStocks Solana catalog, Token-2022 scaled-share accounting, issuer reference data, and Jupiter execution |
 | Funds | Privy Card Onramps, wallet receive address, and a bounded USDC transfer flow |
-| AI agent access | Wallet-bound capability credentials, product allowlists, USD/slippage/leverage limits, an approval queue, exact transaction review, and user-controlled Privy signing |
+| AI agent access | Framework-neutral MCP and REST access with wallet-bound capabilities, product allowlists, USD/slippage/leverage limits, an approval queue, exact transaction review, and user-controlled Privy signing |
 | Gas sponsorship | Jupiter-managed sponsorship for eligible Jupiter swaps and Privy-managed sponsorship for eligible reviewed SPL swaps and USDC sends |
 | Activity | Wallet-bound transaction history and links to confirmed Solana transactions |
 
@@ -34,6 +34,7 @@ flowchart LR
     A --> G[GMTrade Rust adapter]
     A --> X[xStocks]
     A --> AI[Agent policy and approval queue]
+    M[Any MCP-compatible agent] -->|Streamable HTTP + capability| AI
     A --> R[Solana RPC]
     C --> S[Solana mainnet]
     F --> S
@@ -85,6 +86,49 @@ curl -X POST https://flay-production.up.railway.app/api/agent/requests \
 
 Supported intent kinds are `convert`, `stock`, `futures-open`, and `futures-manage`. Fiat onramp, wallet send, private-key export, MagicBlock, policy changes, signing, and arbitrary Solana instructions are absent from the capability API. Capability and approval records are bounded in-process data in the current single-replica deployment, so deployments invalidate outstanding credentials and requests. Reissue a capability after a restart.
 
+### Model Context Protocol
+
+Flay exposes a framework-neutral MCP server at:
+
+```text
+https://flay-production.up.railway.app/api/mcp
+```
+
+The transport is Streamable HTTP. Every protocol request, including initialization and tool discovery, requires `Authorization: Bearer <capability>`. Keep the one-time capability in the client's secret store or process environment; never put it in an agent prompt or commit it to configuration. The server is stateless per request, returns JSON responses, limits request bodies and request rates, validates same-origin browser calls, and rechecks expiry or revocation before every operation.
+
+This example uses the official TypeScript MCP client, but the endpoint works with any conforming client:
+
+```ts
+import { Client, StreamableHTTPClientTransport } from '@modelcontextprotocol/client';
+
+const credential = process.env.FLAY_AGENT_CREDENTIAL;
+if (!credential) throw new Error('FLAY_AGENT_CREDENTIAL is required');
+
+const client = new Client({ name: 'my-trading-agent', version: '1.0.0' });
+const transport = new StreamableHTTPClientTransport(
+  new URL('https://flay-production.up.railway.app/api/mcp'),
+  { authProvider: { token: async () => credential } },
+);
+
+await client.connect(transport);
+const { tools } = await client.listTools();
+console.log(tools.map(({ name }) => name));
+```
+
+The MCP catalog is intentionally small:
+
+| Tool | Authority |
+| --- | --- |
+| `flay_get_tokens` | Read bounded public Solana token metadata |
+| `flay_get_stocks` | Read a bounded page of the public xStocks catalog |
+| `flay_get_futures_markets` | Read normalized public Phoenix and GMTrade market data |
+| `flay_request_convert` | Create a policy-checked Convert approval request |
+| `flay_request_stock_trade` | Create a policy-checked xStocks approval request |
+| `flay_request_futures_open` | Create a policy-checked Futures open request |
+| `flay_request_futures_manage` | Create a policy-checked Futures close or cancel request |
+
+Proposal tools require a UUID idempotency key and return the request ID, status, expiry, and the explicit facts that no funds moved and human approval remains required. The user must open **Agent access** in Flay, review the exact prepared transaction, and sign it in Privy. There are no MCP tools for fiat funding, wallet sends, signing, transaction submission, key export, policy mutation, or arbitrary program instructions.
+
 ## Technology
 
 - **Frontend:** React 19, TypeScript, Vite, Lightweight Charts
@@ -94,7 +138,7 @@ Supported intent kinds are `convert`, `stock`, `futures-open`, and `futures-mana
 - **Futures venues:** Phoenix and GMTrade
 - **Tokenized stocks:** xStocks with Jupiter execution
 - **Protected balance integration:** MagicBlock
-- **Agent controls:** Approval-gated capability API with deterministic Zod contracts
+- **Agent controls:** Official MCP Streamable HTTP server and REST capability API with deterministic Zod contracts
 - **GMTrade bridge:** pinned Rust sidecar using `gmsol-sdk`
 - **Deployment:** Docker and Railway
 

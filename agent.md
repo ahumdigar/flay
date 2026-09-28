@@ -109,3 +109,40 @@ Do not declare this Agent block complete until all supported actions execute thr
 ### Acceptance-criteria result
 
 All nine acceptance criteria pass. The same Privy wallet remains the sole signer; the AI agent can create policy-bounded trading proposals but cannot move funds by possessing its credential. Every value-changing Convert, xStocks, or Futures action reaches the existing exact transaction review and requires the authenticated user to approve it in Privy. Fiat funding and general wallet authority are absent from the capability surface and covered by negative tests.
+
+## Active plan: production MCP integration
+
+**Status:** active
+**Date:** 2026-09-28
+**Scope:** expose Flay's existing approval-gated agent capability through a production, framework-neutral Streamable HTTP MCP server that any conforming remote MCP client can discover and call without expanding the credential's authority
+
+### Security model
+
+MCP is a typed adapter over the existing agent service, not another execution authority. Every MCP request requires the same wallet-bound bearer capability before protocol initialization or tool discovery. Tools may read public Flay market catalogs and create only the four existing structured trading intents. The server never returns or accepts Privy identity tokens, transaction bytes, signatures, private keys, fiat actions, wallet transfers, arbitrary instructions, policy changes, approvals, or direct execution. Submitted proposals still appear in Flay's approval queue and require the authenticated user to review and sign in Privy.
+
+### Implementation plan
+
+1. Add pinned official Model Context Protocol TypeScript server and Node transport packages compatible with Node 22 and the repository's Zod version. Use Streamable HTTP, JSON responses, and a fresh stateless server/transport pair per request to prevent cross-client response leakage.
+2. Mount a dedicated `/mcp` protocol endpoint before the JSON REST parser. Support required `POST`, `GET`, and `DELETE` behavior, bounded bodies, protocol-version negotiation, structured JSON-RPC errors, hardened response headers, and graceful handling of unsupported standalone streams in stateless mode.
+3. Authenticate every MCP method, including `initialize` and `tools/list`, with the existing `Authorization: Bearer flay_agent_…` capability. Reuse constant-time credential validation, expiry, revocation, and per-capability rate limiting; never place the credential in URLs, logs, tool results, or server state.
+4. Register a deliberately small tool catalog: `flay_get_tokens`, `flay_get_stocks`, `flay_get_futures_markets`, `flay_request_convert`, `flay_request_stock_trade`, `flay_request_futures_open`, and `flay_request_futures_manage`. Discovery tools use public read-only services. Proposal tools call the existing `AgentService.submit` policy engine and return request/approval status only.
+5. Give every tool strict input schemas, bounded output, MCP annotations, clear units, and actionable errors. Mark discovery tools read-only; mark proposal tools destructive and non-idempotent at the protocol metadata level while requiring client-supplied idempotency keys for safe retries.
+6. Publish safe MCP metadata and framework-neutral connection guidance without exposing credentials. Document the endpoint, Streamable HTTP transport, authorization header, official SDK example, protocol probe, and first-proposal flow.
+7. Add protocol-level integration tests with the official MCP client transport. Cover initialization, authenticated tool discovery, public reads, proposal submission, policy denial, bad/missing/revoked credentials, unsupported methods, origin rejection, concurrency isolation, and proof that no forbidden tool or secret appears in the catalog/results.
+8. Keep the REST capability API and all manual trading flows backward compatible. Run TypeScript, production build, full tests, release audit, dependency audit, tracked-secret/artifact scan, local MCP client smoke, and safe live regression checks.
+9. Compare every plan item and acceptance criterion with the final repository, embed the completion audit below this plan, push the verified commit, deploy it to Railway, and verify standards-compatible MCP initialization and tool discovery on the live endpoint before declaring completion.
+
+### Acceptance criteria
+
+1. Any conforming MCP client can connect to `https://flay-production.up.railway.app/api/mcp` using Streamable HTTP and a bearer capability kept outside prompts and source literals.
+2. Missing, malformed, expired, revoked, or wrong capability credentials cannot initialize a session or enumerate tools and receive bounded authentication errors without credential leakage.
+3. The MCP catalog contains only the seven documented discovery/proposal tools; there is no fiat, send, export, signing, MagicBlock, approval, execution, arbitrary-transaction, or policy-mutation tool.
+4. All proposal tools use `AgentService.submit`, enforce the same guardrails and idempotency as REST, return an awaiting-approval result, and cannot move funds without a later Privy identity plus wallet signature in Flay.
+5. Streamable HTTP behavior is standards-compatible, safe under parallel clients, bounded against resource exhaustion, and does not share server or transport state across capabilities.
+6. Tool schemas and responses clearly document atomic units, slippage basis points, leverage basis points, route choice, symbols, native IDs, request expiry, and the required human approval step.
+7. The Agent UI, REST API, Convert, Stocks, Futures, Funds, wallet, MagicBlock, and existing gasless flows retain their prior behavior and pass the full repository suite.
+8. README and `agent.md` accurately document setup, trust boundaries, limitations, test evidence, and deployment verification without adding another Markdown file.
+
+### Completion rule
+
+Do not declare MCP complete until an official MCP client successfully initializes against the release build, lists exactly the intended tools under capability authentication, submits a policy-bounded proposal that appears in the approval workflow, the deployed endpoint proves the same release and authentication boundary without disclosing a user-held capability, all forbidden authority remains absent, and the full plan-to-code audit passes.

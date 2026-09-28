@@ -12,6 +12,7 @@ import { AlchemyPayService } from './alchemy-pay-service.js';
 import { GaslessUsdcSendService } from './gasless-usdc-send-service.js';
 import { StockService } from './stocks-service.js';
 import { AgentService } from './agent/service.js';
+import { mountAgentMcp } from './agent/mcp.js';
 import {
   agentExecuteSchema,
   agentIntentSubmissionSchema,
@@ -122,6 +123,7 @@ export function createApiRouter(): Router {
   const agents = new AgentService(tokens, quotes, stocks, futures, futuresTransactions);
 
   router.use(securityHeaders);
+  mountAgentMcp(router, { agents, tokens, stocks, futures });
   router.use(sameOrigin);
   router.use(express.json({ limit: '24kb', strict: true }));
 
@@ -160,6 +162,7 @@ export function createApiRouter(): Router {
         fiatOnRamp: 'Privy Card Onramps',
         stocks: ['xStocks', 'Jupiter Swap V2 Router'],
         agentAccess: 'Flay approval-gated capability API',
+        agentMcp: 'Model Context Protocol · Streamable HTTP · /api/mcp',
       },
       gasless: {
         scope: 'eligible-market-swaps-and-usdc-send',
