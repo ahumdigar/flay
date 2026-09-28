@@ -211,9 +211,9 @@ Do not declare this fix complete until the screenshot's single-provider failure 
 
 All five acceptance criteria pass. Agent Convert now means best executable route: a venue-local Jupiter construction failure advances to the next ranked Raydium or Orca quote, while user-funding and transaction-safety failures remain non-bypassable. MCP still creates proposals only, and the user's later Privy review and signature remain mandatory.
 
-## Active plan: Agent transaction reconciliation UI
+## Completed plan: Agent transaction reconciliation UI
 
-**Status:** active
+**Status:** complete
 **Date:** 2026-09-28
 **Scope:** reconcile a confirmed Agent market transaction with Flay's shared wallet balances and Activity view immediately after Privy execution
 
@@ -237,3 +237,21 @@ All five acceptance criteria pass. Agent Convert now means best executable route
 ### Completion rule
 
 Do not declare this fix complete until the reported transaction is verified onchain, post-execution reconciliation is covered by tests, all checks pass, and the fix is live.
+
+## Agent transaction reconciliation UI audit
+
+**Status:** complete
+**Date:** 2026-09-28
+
+### Plan-to-code comparison
+
+1. **Independent onchain diagnosis — pass.** The configured Solana RPC reports signature `F9fPzrDJFPVEHKprLza4dkeAw2ddQwL4Stw95FAJyxM34oJv2mWAAohKE8gLpYhRFr3KyrTpEmvwvt6kcWXzWNB` finalized at 2026-09-28 13:57:38 UTC with `err: null`. The wallet's USDC changed from 0.065131 to 0.005131 and its SOL changed from 0.001791042 to 0.002291338: exactly 0.060000 USDC spent and 0.000500296 SOL received. A distinct Jupiter fee payer paid the 10,089-lamport network fee. The swap succeeded; the stale shared balance display caused the apparent failure.
+2. **Post-execution notification — pass.** `AgentPage` emits the accepted execution and its reviewed action only after the execution or sponsored-completion API resolves. Rejected, cancelled, signing-failed, or server-failed actions never call the reconciliation callback. The callback carries public result/review data only and does not alter the Privy signing boundary.
+3. **Balance and Activity reconciliation — pass.** The app shell refreshes confirmed balances immediately and again after a 1.5-second settlement interval. Agent Convert and resolved xStocks market results are converted into the existing wallet-scoped Activity format, deduplicated by signature, capped at 50 entries, and later resolved through the existing authenticated onchain activity endpoint. Futures results do not enter the market Activity format and retain their existing portfolio reconciliation.
+4. **Clear success evidence — pass.** The Agent success banner distinguishes `confirmed` from `submitted`, shows the provider and shortened signature, and retains the Solana Explorer link. Local reconciliation failure cannot replace an authoritative successful server response with a false transaction failure.
+5. **Focused and complete checks — pass.** New tests cover Convert classification, resolved stock context, Futures exclusion, signature deduplication, and the 50-entry bound. TypeScript, the production build, 51 test files, and 299 tests passed, with 8 credential/mainnet-gated skips. The release audit passed across 246 browser bundles. The production dependency audit passed the configured high-severity threshold with only the three previously documented low-severity MagicBlock transitive findings.
+6. **Production verification — pass.** Commit `5975d17` was pushed to `origin/main`; Railway deployment `0b7491ae-632e-4edd-85cf-121993ec6e10` completed successfully. Live health returned `ok`, and a post-deployment RPC check reconfirmed the reported signature as finalized with no error.
+
+### Acceptance-criteria result
+
+All five acceptance criteria and all six plan items pass. Confirmed Agent market transactions now refresh shared balances, enter Activity, and show their signature immediately while preserving the same exact-transaction review, server receipt checks, and user-controlled Privy signature.
