@@ -168,9 +168,9 @@ Do not declare MCP complete until an official MCP client successfully initialize
 
 All eight acceptance criteria and all nine implementation items pass. Any standards-compatible remote MCP client can use Flay's Streamable HTTP endpoint with a user-created capability. That capability remains an in-process, single-replica, revocable proposal credential, so a deployment invalidates existing credentials and the user must create a new one. It can discover bounded public data and create guardrail-checked Convert, xStocks, and Futures proposals; it cannot approve, sign, submit, fund, transfer, export keys, mutate policy, or move funds. The user's Privy wallet remains the only transaction signer.
 
-## Active plan: Agent Convert route recovery
+## Completed plan: Agent Convert route recovery
 
-**Status:** active
+**Status:** complete
 **Date:** 2026-09-28
 **Scope:** make an approved Agent Convert proposal preserve Flay's aggregator behavior when the highest-output venue quotes successfully but cannot build an executable transaction
 
@@ -193,3 +193,20 @@ All eight acceptance criteria and all nine implementation items pass. Any standa
 ### Completion rule
 
 Do not declare this fix complete until the screenshot's single-provider failure path is covered by a passing fallback test, all acceptance criteria pass, and the verified code is live.
+
+## Agent Convert route recovery audit
+
+**Status:** complete
+**Date:** 2026-09-28
+
+### Plan-to-code comparison
+
+1. **Shared explicit fallback policy — pass.** `shared/market-routing.ts` now contains the single allowlist of venue-local availability and build failures used by manual Convert and server-side Agent review. Balance, wallet ownership, signer, unsafe transaction, semantic validation, and simulation-integrity errors are absent from the allowlist and stop review immediately.
+2. **Ranked executable aggregation — pass.** `server/market-route-fallback.ts` tries each quoted provider at most once, preserves the provider ranking, caps attempts to Jupiter, Raydium, and Orca, and stops at the first exact transaction that passes the existing preparation, structure-validation, and simulation path. `AgentService` places the declared best quote first and sends all ranked candidates through this helper.
+3. **Recoverable exhausted state — pass.** When every venue fails for an allowed provider reason, Flay returns retryable `AGENT_NO_EXECUTABLE_ROUTE` with a provider-labelled message bounded below 420 characters. `AgentStore.noteFailure` therefore keeps the request pending with its failure visible, allowing the user to retry review. Funding and transaction-integrity failures remain terminal for the review attempt and cannot fall through to another venue.
+4. **Focused evidence — pass.** New server tests reproduce the screenshot's `Jupiter: Failed to get quotes` path and prove that Raydium is prepared next. They also cover all-provider exhaustion, pending retry state, duplicate-provider suppression, three-venue bounds, single-route behavior, insufficient-balance stopping, and unsafe-transaction stopping. Existing manual Convert fallback tests continue to use the same error policy.
+5. **Full verification and production — pass.** TypeScript and the production build passed. The full suite passed 50 test files and 296 tests, with 8 credential/mainnet-gated skips. The release audit passed across 246 browser bundles; the production dependency audit passed its configured high-severity threshold with only the three previously documented low-severity MagicBlock transitive findings. Commit `b9df20d` was pushed to `origin/main`, and Railway deployment `43869351-1807-4c80-b9ae-14d01cbdf794` completed successfully. Live health returned `ok`; a live USDC-to-SOL quote returned Jupiter as the best route with Raydium and Orca alternatives, confirming the deployed market currently exercises the repaired candidate shape.
+
+### Acceptance-criteria result
+
+All five acceptance criteria pass. Agent Convert now means best executable route: a venue-local Jupiter construction failure advances to the next ranked Raydium or Orca quote, while user-funding and transaction-safety failures remain non-bypassable. MCP still creates proposals only, and the user's later Privy review and signature remain mandatory.
