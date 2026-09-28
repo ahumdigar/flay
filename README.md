@@ -16,6 +16,7 @@ Flay is a public beta running on Solana mainnet. It does not custody user assets
 | Futures | Unified Phoenix and GMTrade markets, route comparison, reference candles, collateral controls, order review, positions, and recovery states |
 | Stocks | Official xStocks Solana catalog, Token-2022 scaled-share accounting, issuer reference data, and Jupiter execution |
 | Funds | Privy Card Onramps, wallet receive address, and a bounded USDC transfer flow |
+| AI agent access | Wallet-bound capability credentials, product allowlists, USD/slippage/leverage limits, an approval queue, exact transaction review, and user-controlled Privy signing |
 | Gas sponsorship | Jupiter-managed sponsorship for eligible Jupiter swaps and Privy-managed sponsorship for eligible reviewed SPL swaps and USDC sends |
 | Activity | Wallet-bound transaction history and links to confirmed Solana transactions |
 
@@ -32,6 +33,7 @@ flowchart LR
     A --> F[Phoenix]
     A --> G[GMTrade Rust adapter]
     A --> X[xStocks]
+    A --> AI[Agent policy and approval queue]
     A --> R[Solana RPC]
     C --> S[Solana mainnet]
     F --> S
@@ -53,8 +55,35 @@ Futures candles are stable reference data rendered with TradingView Lightweight 
 - Sponsored flows accept only their reviewed transaction shape and verify the confirmed onchain result.
 - Provider secrets, identity tokens, signed transaction bytes, and private RPC credentials stay out of browser bundles and logs.
 - A provider outage disables affected new actions while preserving visible balances, positions, and recovery controls where cached state is available.
+- AI agent credentials are stored as SHA-256 hashes, expire automatically, and can only create bounded approval requests. They cannot access Privy signing, fiat funding, wallet export, transfers, or arbitrary program calls.
 
 MagicBlock protected-balance functionality is isolated from third-party venues. It does not make Jupiter, Phoenix, GMTrade, or xStocks activity private; those transactions remain observable on Solana.
+
+## AI agent access
+
+The **Agent access** workspace lets a signed-in user create a narrow capability for an external AI agent. The policy selects Convert, xStocks, and/or Futures, then limits tokens or markets, value per request, rolling 24-hour value, slippage, leverage, open positions, and credential lifetime.
+
+The credential can submit a structured intent to `POST /api/agent/requests`. It cannot obtain a signer or submit a transaction. Flay validates the intent against the policy and places it in the same Privy wallet's approval queue. The user opens the exact provider transaction, reviews its route and economic terms, and approves it with Privy. Rejecting or ignoring the request moves no funds; unsigned requests expire after 15 minutes.
+
+```sh
+export FLAY_AGENT_CREDENTIAL='copy-the-one-time-value-from-flay'
+
+curl -X POST https://flay-production.up.railway.app/api/agent/requests \
+  -H "Authorization: Bearer $FLAY_AGENT_CREDENTIAL" \
+  -H 'Content-Type: application/json' \
+  --data '{
+    "idempotencyKey": "811ad33d-c22f-41f9-8bcd-bbb8b9a84551",
+    "intent": {
+      "kind": "convert",
+      "inputMint": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+      "outputMint": "So11111111111111111111111111111111111111112",
+      "amountAtomic": "1000000",
+      "slippageBps": 50
+    }
+  }'
+```
+
+Supported intent kinds are `convert`, `stock`, `futures-open`, and `futures-manage`. Fiat onramp, wallet send, private-key export, MagicBlock, policy changes, signing, and arbitrary Solana instructions are absent from the capability API. Capability and approval records are bounded in-process data in the current single-replica deployment, so deployments invalidate outstanding credentials and requests. Reissue a capability after a restart.
 
 ## Technology
 
@@ -65,6 +94,7 @@ MagicBlock protected-balance functionality is isolated from third-party venues. 
 - **Futures venues:** Phoenix and GMTrade
 - **Tokenized stocks:** xStocks with Jupiter execution
 - **Protected balance integration:** MagicBlock
+- **Agent controls:** Approval-gated capability API with deterministic Zod contracts
 - **GMTrade bridge:** pinned Rust sidecar using `gmsol-sdk`
 - **Deployment:** Docker and Railway
 
@@ -189,6 +219,7 @@ The health response reports sanitized readiness for Privy, RPC, swap providers, 
 
 - Flay currently targets Solana mainnet only.
 - Users approve and sign their own transactions; confirmation and settlement still depend on Solana and the selected venue.
+- AI agents can propose only policy-approved trading intents. A human Privy signature is required for every value-changing action.
 - Phoenix execution requires wallet onboarding and collateral setup before it becomes eligible.
 - GMTrade availability depends on the pinned sidecar and upstream GMTrade services.
 - xStocks are tokenized financial instruments, not direct equities. Availability and rights depend on the issuer and the user's jurisdiction.

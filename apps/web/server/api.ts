@@ -11,6 +11,15 @@ import { FuturesTransactionService, futuresTransactionDiagnostics } from './futu
 import { AlchemyPayService } from './alchemy-pay-service.js';
 import { GaslessUsdcSendService } from './gasless-usdc-send-service.js';
 import { StockService } from './stocks-service.js';
+import { AgentService } from './agent/service.js';
+import {
+  agentExecuteSchema,
+  agentIntentSubmissionSchema,
+  agentPolicySchema,
+  agentRequestActionSchema,
+  agentSponsoredCompleteSchema,
+  agentWorkspaceSchema,
+} from './agent/schemas.js';
 import {
   activitySchema,
   alchemyPayCheckoutSchema,
@@ -110,6 +119,7 @@ export function createApiRouter(): Router {
   const alchemyPay = new AlchemyPayService();
   const gaslessUsdcSend = new GaslessUsdcSendService(tokens);
   const stocks = new StockService(tokens, quotes);
+  const agents = new AgentService(tokens, quotes, stocks, futures, futuresTransactions);
 
   router.use(securityHeaders);
   router.use(sameOrigin);
@@ -149,6 +159,7 @@ export function createApiRouter(): Router {
         rpc: rpcProviderLabel(),
         fiatOnRamp: 'Privy Card Onramps',
         stocks: ['xStocks', 'Jupiter Swap V2 Router'],
+        agentAccess: 'Flay approval-gated capability API',
       },
       gasless: {
         scope: 'eligible-market-swaps-and-usdc-send',
@@ -168,6 +179,67 @@ export function createApiRouter(): Router {
       // Dormant fallback metadata. The shipped Funds page does not call these routes.
       alchemyPay: alchemyPay.capability(),
     });
+  }));
+
+  router.get('/agent/workspace', requireIdentity, rateLimit(30, 60_000), asyncRoute(async (request, response) => {
+    const { wallet } = agentWorkspaceSchema.parse(request.query);
+    assertIdentityWallet(request, wallet);
+    response.json(agents.workspace(request.flayIdentity!.userId, wallet));
+  }));
+
+  router.post('/agent/credentials', requireIdentity, rateLimit(5, 60_000), asyncRoute(async (request, response) => {
+    const input = agentPolicySchema.parse(request.body);
+    assertIdentityWallet(request, input.wallet);
+    const { wallet, ...policy } = input;
+    response.status(201).json(agents.createCredential(request.flayIdentity!.userId, wallet, policy));
+  }));
+
+  router.post('/agent/credentials/:id/revoke', requireIdentity, rateLimit(10, 60_000), asyncRoute(async (request, response) => {
+    const { wallet } = agentRequestActionSchema.parse(request.body);
+    assertIdentityWallet(request, wallet);
+    const id = Array.isArray(request.params.id) ? request.params.id[0] : request.params.id;
+    response.json({ credential: agents.revoke(request.flayIdentity!.userId, wallet, id) });
+  }));
+
+  router.post('/agent/requests', rateLimit(30, 60_000), asyncRoute(async (request, response) => {
+    const submittedKind = request.body && typeof request.body === 'object' && !Array.isArray(request.body)
+      && 'intent' in request.body && request.body.intent && typeof request.body.intent === 'object' && !Array.isArray(request.body.intent)
+      && 'kind' in request.body.intent ? request.body.intent.kind : undefined;
+    if (typeof submittedKind === 'string' && !['convert', 'stock', 'futures-open', 'futures-manage'].includes(submittedKind)) {
+      throw new AppError(403, 'AGENT_ACTION_NOT_ALLOWED', 'This capability supports only Convert, xStocks, and Futures requests. Fiat funding and general wallet actions are unavailable.');
+    }
+    const input = agentIntentSubmissionSchema.parse(request.body);
+    const authorization = request.header('authorization');
+    const credential = authorization?.startsWith('Bearer ') ? authorization.slice(7) : undefined;
+    response.status(202).json({ request: await agents.submit(credential, input) });
+  }));
+
+  router.post('/agent/requests/:id/review', requireIdentity, rateLimit(12, 60_000), asyncRoute(async (request, response) => {
+    const { wallet } = agentRequestActionSchema.parse(request.body);
+    assertIdentityWallet(request, wallet);
+    const id = Array.isArray(request.params.id) ? request.params.id[0] : request.params.id;
+    response.json(await agents.review(request.flayIdentity!.userId, wallet, id));
+  }));
+
+  router.post('/agent/requests/:id/reject', requireIdentity, rateLimit(20, 60_000), asyncRoute(async (request, response) => {
+    const { wallet } = agentRequestActionSchema.parse(request.body);
+    assertIdentityWallet(request, wallet);
+    const id = Array.isArray(request.params.id) ? request.params.id[0] : request.params.id;
+    response.json({ request: agents.reject(request.flayIdentity!.userId, wallet, id) });
+  }));
+
+  router.post('/agent/requests/:id/execute', requireIdentity, rateLimit(12, 60_000), asyncRoute(async (request, response) => {
+    const input = agentExecuteSchema.parse(request.body);
+    assertIdentityWallet(request, input.wallet);
+    const id = Array.isArray(request.params.id) ? request.params.id[0] : request.params.id;
+    response.json(await agents.execute(request.flayIdentity!.userId, input.wallet, id, input.signedTransaction, input.idempotencyKey));
+  }));
+
+  router.post('/agent/requests/:id/complete-sponsored', requireIdentity, rateLimit(12, 60_000), asyncRoute(async (request, response) => {
+    const input = agentSponsoredCompleteSchema.parse(request.body);
+    assertIdentityWallet(request, input.wallet);
+    const id = Array.isArray(request.params.id) ? request.params.id[0] : request.params.id;
+    response.json(await agents.completeSponsored(request.flayIdentity!.userId, input.wallet, id, input.signature));
   }));
 
   router.get('/fiat/capability', rateLimit(30, 60_000), asyncRoute(async (_request, response) => {

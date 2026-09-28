@@ -5,6 +5,7 @@ import {
   ArrowDownUp,
   ArrowRight,
   Banknote,
+  Bot,
   Check,
   CheckCircle2,
   ChevronDown,
@@ -66,11 +67,12 @@ import { isCurrentQuoteResponse } from './quote-state';
 import FuturesPage from './futures/FuturesPage';
 import FundsPage from './fiat/FundsPage';
 import StocksPage from './stocks/StocksPage';
+import AgentPage from './agent/AgentPage';
 
 type Modal = 'wallet' | 'magicblock' | 'magic-review' | 'magic-success' | 'settings' | 'token' | 'review' | 'success' | 'setup' | null;
 type Side = 'from' | 'to';
 type OrderType = 'market' | 'limit';
-type View = 'convert' | 'stocks' | 'futures' | 'funds' | 'activity';
+type View = 'convert' | 'stocks' | 'futures' | 'funds' | 'agent' | 'activity';
 type RouteChoice = QuoteProvider | 'auto';
 export type MagicUnlockStage = 'idle' | 'requesting-challenge' | 'signing-wallet' | 'verifying-signature' | 'loading-balance';
 
@@ -984,6 +986,7 @@ function App({ auth }: { auth: FlayAuth }) {
             <button className={`nav-link ${view === 'stocks' ? 'active' : ''}`} onClick={() => navigate('stocks')} aria-current={view === 'stocks' ? 'page' : undefined}><ChartNoAxesCombined size={18} /><span>Stocks</span>{view === 'stocks' && <span className="active-pin" />}</button>
             <button className={`nav-link ${view === 'futures' ? 'active' : ''}`} onClick={() => navigate('futures')} aria-current={view === 'futures' ? 'page' : undefined}><CandlestickChart size={18} /><span>Futures</span>{view === 'futures' && <span className="active-pin" />}</button>
             <button className={`nav-link ${view === 'funds' ? 'active' : ''}`} onClick={() => navigate('funds')} aria-current={view === 'funds' ? 'page' : undefined}><Banknote size={18} /><span>Add funds</span>{view === 'funds' && <span className="active-pin" />}</button>
+            <button className={`nav-link ${view === 'agent' ? 'active' : ''}`} onClick={() => navigate('agent')} aria-current={view === 'agent' ? 'page' : undefined}><Bot size={18} /><span>Agent access</span>{view === 'agent' && <span className="active-pin" />}</button>
             <button className={`nav-link ${view === 'activity' ? 'active' : ''}`} onClick={() => navigate('activity')} aria-current={view === 'activity' ? 'page' : undefined}><Activity size={18} /><span>Activity</span>{view === 'activity' && <span className="active-pin" />}</button>
             <div className="nav-caption nav-caption-secondary">ACCOUNT</div>
             <button className="nav-link" onClick={() => setModal(auth.configured ? 'wallet' : 'setup')}><Wallet size={18} /><span>Wallet</span><ChevronRight size={16} className="nav-end" /></button>
@@ -1003,7 +1006,7 @@ function App({ auth }: { auth: FlayAuth }) {
       <div className="main-shell">
         <header className="topbar">
           <div className="topbar-mobile-logo"><Logo compact /><span>flay<span className="logo-period">.</span></span></div>
-          <div className="breadcrumb"><span>Workspace</span><ChevronRight size={14} /><strong>{view === 'convert' ? 'Convert' : view === 'stocks' ? 'Stocks' : view === 'futures' ? 'Futures' : view === 'funds' ? 'Add funds' : 'Activity'}</strong></div>
+          <div className="breadcrumb"><span>Workspace</span><ChevronRight size={14} /><strong>{view === 'convert' ? 'Convert' : view === 'stocks' ? 'Stocks' : view === 'futures' ? 'Futures' : view === 'funds' ? 'Add funds' : view === 'agent' ? 'Agent access' : 'Activity'}</strong></div>
           <div className="topbar-actions">
             <div className="network-pill"><span className="network-dot" /> Solana mainnet</div>
             <button className="top-connect" onClick={() => setModal(auth.configured ? 'wallet' : 'setup')}>
@@ -1184,6 +1187,8 @@ function App({ auth }: { auth: FlayAuth }) {
           <FuturesPage auth={auth} />
         ) : view === 'funds' ? (
           <FundsPage auth={auth} balances={visibleBalances} onBalanceRefresh={refreshBalances} />
+        ) : view === 'agent' ? (
+          <AgentPage auth={auth} />
         ) : (
           <ActivityPage
             authenticated={auth.authenticated}
@@ -1212,6 +1217,7 @@ function App({ auth }: { auth: FlayAuth }) {
         <button className={view === 'stocks' ? 'active' : ''} onClick={() => navigate('stocks')}><ChartNoAxesCombined size={20} /><span>Stocks</span></button>
         <button className={view === 'futures' ? 'active' : ''} onClick={() => navigate('futures')}><CandlestickChart size={20} /><span>Futures</span></button>
         <button className={view === 'funds' ? 'active' : ''} onClick={() => navigate('funds')}><Banknote size={20} /><span>Funds</span></button>
+        <button className={view === 'agent' ? 'active' : ''} onClick={() => navigate('agent')}><Bot size={20} /><span>Agent</span></button>
         <button className={view === 'activity' ? 'active' : ''} onClick={() => navigate('activity')}><Activity size={20} /><span>Activity</span></button>
         <button onClick={() => setModal(auth.configured ? 'wallet' : 'setup')}><Wallet size={20} /><span>Wallet</span></button>
       </nav>
