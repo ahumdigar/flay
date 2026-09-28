@@ -210,3 +210,30 @@ Do not declare this fix complete until the screenshot's single-provider failure 
 ### Acceptance-criteria result
 
 All five acceptance criteria pass. Agent Convert now means best executable route: a venue-local Jupiter construction failure advances to the next ranked Raydium or Orca quote, while user-funding and transaction-safety failures remain non-bypassable. MCP still creates proposals only, and the user's later Privy review and signature remain mandatory.
+
+## Active plan: Agent transaction reconciliation UI
+
+**Status:** active
+**Date:** 2026-09-28
+**Scope:** reconcile a confirmed Agent market transaction with Flay's shared wallet balances and Activity view immediately after Privy execution
+
+### Implementation plan
+
+1. Verify the reported signature independently through the configured Solana RPC and distinguish an onchain failure from stale client state before changing execution logic.
+2. Have the Agent workspace notify the application shell after a successful execution, including the reviewed action and execution result, without exposing transaction bytes or changing signing authority.
+3. Refresh confirmed wallet balances immediately and once after a short RPC-settlement delay. Record completed Agent Convert and xStocks market signatures in the existing bounded wallet Activity store so the standard onchain activity verifier can display them.
+4. Keep Futures behavior scoped to its existing portfolio reconciliation while still refreshing wallet balances after collateral-changing actions.
+5. Add focused tests for Agent activity classification and duplicate-safe recording, then run full repository, release, and dependency checks.
+6. Compare the implementation with this plan, deploy the verified build, confirm production health, and embed the completion audit before declaring the UI issue complete.
+
+### Acceptance criteria
+
+1. A confirmed Agent Convert updates the shared wallet balances without requiring logout, hard refresh, or another manual transaction.
+2. Its signature appears in Flay Activity and resolves through the existing authenticated onchain verifier.
+3. The Agent success UI shows the provider, confirmation state, shortened signature, and Explorer link.
+4. The callback runs only after the server accepts the execution; failed or cancelled Privy actions do not refresh or create activity records.
+5. Agent authority, exact-transaction review, Privy signing, server receipt validation, and all existing product behavior remain unchanged.
+
+### Completion rule
+
+Do not declare this fix complete until the reported transaction is verified onchain, post-execution reconciliation is covered by tests, all checks pass, and the fix is live.

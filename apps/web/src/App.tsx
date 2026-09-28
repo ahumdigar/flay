@@ -39,6 +39,7 @@ import {
   type ReactNode,
 } from 'react';
 import { atomicToDecimal, decimalToAtomic } from '../shared/amounts';
+import type { AgentExecutionResponse, AgentReviewResponse } from '../shared/agent';
 import { CORE_TOKEN_MINTS, SOL_MINT } from '../shared/constants';
 import { scaledAtomicToDecimal } from '../shared/stock-amounts';
 import type {
@@ -68,6 +69,7 @@ import FuturesPage from './futures/FuturesPage';
 import FundsPage from './fiat/FundsPage';
 import StocksPage from './stocks/StocksPage';
 import AgentPage from './agent/AgentPage';
+import { agentMarketActivity, mergeStoredActivity, type StoredActivity } from './agent/reconciliation';
 
 type Modal = 'wallet' | 'magicblock' | 'magic-review' | 'magic-success' | 'settings' | 'token' | 'review' | 'success' | 'setup' | null;
 type Side = 'from' | 'to';
@@ -108,15 +110,6 @@ interface HealthResponse {
     fiatOnRamp: string;
     stocks: string[];
   };
-}
-
-interface StoredActivity {
-  signature: string;
-  kind: 'Market' | 'Limit' | 'Stock';
-  provider: string;
-  gasPayment?: Pick<GasPayment, 'mode' | 'provider'>;
-  createdAt: number;
-  stock?: StockTradeContext;
 }
 
 const PROVIDER_META: Record<QuoteProvider, { letter: string; short: string }> = {
@@ -973,6 +966,13 @@ function App({ auth }: { auth: FlayAuth }) {
   const limitReady = Boolean(fromToken && toToken && Number(amount) > 0 && Number(limitOutput) > 0);
   const authNeedsServer = auth.configured && health && !health.readiness.privy;
   const refreshBalances = useCallback(() => setBalanceNonce((value) => value + 1), []);
+  const reconcileAgentTransaction = useCallback((completed: AgentExecutionResponse, review: AgentReviewResponse) => {
+    if (!auth.walletAddress) return;
+    const activity = agentMarketActivity(completed, review);
+    if (activity) writeStoredActivity(auth.walletAddress, activity);
+    setBalanceNonce((value) => value + 1);
+    window.setTimeout(() => setBalanceNonce((value) => value + 1), 1_500);
+  }, [auth.walletAddress]);
 
   return (
     <div className="app-shell">
@@ -1188,7 +1188,7 @@ function App({ auth }: { auth: FlayAuth }) {
         ) : view === 'funds' ? (
           <FundsPage auth={auth} balances={visibleBalances} onBalanceRefresh={refreshBalances} />
         ) : view === 'agent' ? (
-          <AgentPage auth={auth} />
+          <AgentPage auth={auth} onTransactionCompleted={reconcileAgentTransaction} />
         ) : (
           <ActivityPage
             authenticated={auth.authenticated}
@@ -2013,8 +2013,7 @@ function readStoredActivity(wallet: string): StoredActivity[] {
 }
 
 function writeStoredActivity(wallet: string, entry: StoredActivity): void {
-  const current = readStoredActivity(wallet).filter((item) => item.signature !== entry.signature);
-  localStorage.setItem(activityStorageKey(wallet), JSON.stringify([entry, ...current].slice(0, 50)));
+  localStorage.setItem(activityStorageKey(wallet), JSON.stringify(mergeStoredActivity(readStoredActivity(wallet), entry)));
 }
 
 export default App;

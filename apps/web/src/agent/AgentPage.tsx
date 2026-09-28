@@ -35,6 +35,7 @@ import './agent.css';
 
 interface AgentPageProps {
   auth: FlayAuth;
+  onTransactionCompleted?: (execution: AgentExecutionResponse, review: AgentReviewResponse) => void;
 }
 
 const DEFAULT_STOCKS = ['AAPLX', 'NVDAX', 'TSLAX', 'MSFTX'];
@@ -110,7 +111,7 @@ function errorMessage(error: unknown) {
   return readableError(error);
 }
 
-export default function AgentPage({ auth }: AgentPageProps) {
+export default function AgentPage({ auth, onTransactionCompleted }: AgentPageProps) {
   const [workspace, setWorkspace] = useState<AgentWorkspaceResponse | null>(null);
   const [form, setForm] = useState<PolicyForm>(DEFAULT_FORM);
   const [created, setCreated] = useState<AgentCredentialCreated | null>(null);
@@ -270,7 +271,10 @@ export default function AgentPage({ auth }: AgentPageProps) {
           body: JSON.stringify({ wallet: auth.walletAddress, signedTransaction: toBase64(signed), idempotencyKey: crypto.randomUUID() }),
         });
       }
-      setExecution(result); setReview(null); await load(true);
+      setExecution(result);
+      setReview(null);
+      try { onTransactionCompleted?.(result, review); } catch { /* The confirmed server result remains authoritative if local UI reconciliation fails. */ }
+      await load(true);
     } catch (caught) { setError(errorMessage(caught)); }
     finally { setBusy(null); }
   }
@@ -291,7 +295,7 @@ export default function AgentPage({ auth }: AgentPageProps) {
       </section>
 
       {error && <div className="agent-error" role="alert"><AlertCircle size={17} /><span>{error}</span><button onClick={() => setError(null)} aria-label="Dismiss"><X size={15} /></button></div>}
-      {execution && <div className="agent-success" role="status"><CheckCircle2 size={18} /><div><strong>Transaction submitted</strong><span>{execution.result.status} through {execution.request.execution?.provider}</span></div><a href={execution.result.explorerUrl} target="_blank" rel="noreferrer">Explorer <ExternalLink size={13} /></a></div>}
+      {execution && <div className="agent-success" role="status"><CheckCircle2 size={18} /><div><strong>{execution.result.status === 'confirmed' ? 'Transaction confirmed' : 'Transaction submitted'}</strong><span>{execution.result.status} through {execution.request.execution?.provider} · {short(execution.result.signature, 7)}</span></div><a href={execution.result.explorerUrl} target="_blank" rel="noreferrer">Explorer <ExternalLink size={13} /></a></div>}
 
       <section className="agent-assurances">
         <div><ShieldCheck size={19} /><span><strong>You sign every transaction</strong><small>The capability cannot access your Privy signer.</small></span></div>
