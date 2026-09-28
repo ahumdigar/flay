@@ -1,22 +1,8 @@
 import type { MarketQuote, QuoteProvider, QuoteResponse } from '../shared/types.js';
+import { isAutoMarketRouteFallbackCode } from '../shared/market-routing.js';
 import { ApiClientError, readableError } from './lib/api.js';
 
 export type MarketRouteChoice = QuoteProvider | 'auto';
-
-const AUTO_ROUTE_FALLBACK_CODES = new Set([
-  'NETWORK_ERROR',
-  'PROVIDER_RATE_LIMITED',
-  'PROVIDER_TIMEOUT',
-  'PROVIDER_UNAVAILABLE',
-  'PROVIDER_REJECTED',
-  'RAYDIUM_BUILD_FAILED',
-  'ORCA_POOL_UNAVAILABLE',
-  'JUPITER_BUILD_FAILED',
-  'JUPITER_GASLESS_MINIMUM',
-  'NO_DIRECT_ROUTE',
-  'BLOCKHASH_EXPIRED',
-  'SLIPPAGE_EXCEEDED',
-]);
 
 export function marketPrepareCandidates(
   response: QuoteResponse | null,
@@ -46,7 +32,7 @@ export function shouldTryNextMarketRoute(
 export function isAutoMarketFallbackFailure(choice: MarketRouteChoice, error: unknown): boolean {
   return choice === 'auto'
     && error instanceof ApiClientError
-    && AUTO_ROUTE_FALLBACK_CODES.has(error.code);
+    && isAutoMarketRouteFallbackCode(error.code);
 }
 
 export function automaticPreparationFailure(

@@ -6,6 +6,7 @@ import type { FuturesTransactionService } from '../futures/transaction-service.j
 import type { QuoteService } from '../quote-service.js';
 import type { StockService } from '../stocks-service.js';
 import type { TokenService } from '../tokens.js';
+import { AppError } from '../errors.js';
 import { AgentService } from './service.js';
 
 function service() {
@@ -65,5 +66,68 @@ describe('agent policy enforcement', () => {
     expect(tokens.getByMint).toHaveBeenCalledTimes(1);
     await expect(agents.submit(created.credential, { idempotencyKey: crypto.randomUUID(), intent: convert('11000000') }))
       .rejects.toMatchObject({ code: 'AGENT_DAILY_LIMIT' });
+  });
+
+  it('prepares the next ranked Convert venue when the first venue cannot build', async () => {
+    const tokens = { getByMint: vi.fn().mockResolvedValue({ mint: USDC_MINT, decimals: 6, usdPrice: 1, verified: true, tradable: true }) };
+    const quotes = {
+      quotes: vi.fn().mockResolvedValue({
+        bestQuoteId: 'jupiter-quote',
+        quotes: [
+          { id: 'jupiter-quote', provider: 'jupiter' },
+          { id: 'raydium-quote', provider: 'raydium' },
+        ],
+      }),
+      prepare: vi.fn(async (id: string) => {
+        if (id === 'jupiter-quote') throw new AppError(400, 'PROVIDER_REJECTED', 'Jupiter: Failed to get quotes');
+        return { preparedId: 'raydium-prepared', provider: 'raydium' };
+      }),
+    };
+    const agents = new AgentService(
+      tokens as unknown as TokenService,
+      quotes as unknown as QuoteService,
+      {} as StockService,
+      {} as FuturesService,
+      {} as FuturesTransactionService,
+    );
+    const credential = agents.createCredential('user-1', SOL_MINT, basePolicy);
+    const submitted = await agents.submit(credential.credential, { idempotencyKey: crypto.randomUUID(), intent: convert('100000') });
+    const reviewed = await agents.review('user-1', SOL_MINT, submitted.id);
+
+    expect(quotes.prepare.mock.calls.map(([id]) => id)).toEqual(['jupiter-quote', 'raydium-quote']);
+    expect(reviewed.request.status).toBe('prepared');
+    expect(reviewed.action).toMatchObject({ type: 'market', prepared: { preparedId: 'raydium-prepared', provider: 'raydium' } });
+  });
+
+  it('leaves an exhausted Convert proposal pending for a later retry', async () => {
+    const tokens = { getByMint: vi.fn().mockResolvedValue({ mint: USDC_MINT, decimals: 6, usdPrice: 1, verified: true, tradable: true }) };
+    const quotes = {
+      quotes: vi.fn().mockResolvedValue({
+        bestQuoteId: 'jupiter-quote',
+        quotes: [
+          { id: 'jupiter-quote', provider: 'jupiter' },
+          { id: 'orca-quote', provider: 'orca' },
+        ],
+      }),
+      prepare: vi.fn().mockRejectedValue(new AppError(502, 'PROVIDER_UNAVAILABLE', 'Venue unavailable.', true)),
+    };
+    const agents = new AgentService(
+      tokens as unknown as TokenService,
+      quotes as unknown as QuoteService,
+      {} as StockService,
+      {} as FuturesService,
+      {} as FuturesTransactionService,
+    );
+    const credential = agents.createCredential('user-1', SOL_MINT, basePolicy);
+    const submitted = await agents.submit(credential.credential, { idempotencyKey: crypto.randomUUID(), intent: convert('100000') });
+
+    await expect(agents.review('user-1', SOL_MINT, submitted.id)).rejects.toMatchObject({
+      code: 'AGENT_NO_EXECUTABLE_ROUTE',
+      retryable: true,
+    });
+    const request = agents.workspace('user-1', SOL_MINT).requests.find((item) => item.id === submitted.id);
+    expect(request).toMatchObject({ status: 'pending' });
+    expect(request?.failure).toContain('No executable Convert route');
+    expect(quotes.prepare).toHaveBeenCalledTimes(2);
   });
 });

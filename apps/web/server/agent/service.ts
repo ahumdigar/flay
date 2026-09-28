@@ -4,6 +4,7 @@ import { decimalToAtomic } from '../../shared/amounts.js';
 import { AppError, asAppError } from '../errors.js';
 import type { FuturesService } from '../futures/futures-service.js';
 import type { FuturesTransactionService } from '../futures/transaction-service.js';
+import { prepareRankedMarketRoute } from '../market-route-fallback.js';
 import type { QuoteService } from '../quote-service.js';
 import type { StockService } from '../stocks-service.js';
 import type { TokenService } from '../tokens.js';
@@ -199,9 +200,15 @@ export class AgentService {
         amount: intent.amountAtomic,
         slippageBps: intent.slippageBps,
       });
-      const quote = response.quotes.find((item) => item.id === response.bestQuoteId) ?? response.quotes[0];
-      if (!quote) throw new AppError(409, 'AGENT_NO_ROUTE', 'No executable Convert route is currently available.', true);
-      return { type: 'market' as const, prepared: await this.quotes.prepare(quote.id, request.wallet) };
+      const best = response.quotes.find((item) => item.id === response.bestQuoteId);
+      const candidates = best
+        ? [best, ...response.quotes.filter((item) => item.id !== best.id)]
+        : response.quotes;
+      if (candidates.length === 0) throw new AppError(409, 'AGENT_NO_ROUTE', 'No executable Convert route is currently available.', true);
+      return {
+        type: 'market' as const,
+        prepared: await prepareRankedMarketRoute(candidates, (quote) => this.quotes.prepare(quote.id, request.wallet)),
+      };
     }
     if (intent.kind === 'stock') {
       const response = await this.stocks.quote({ wallet: request.wallet, symbol: intent.symbol, side: intent.side, amount: intent.amount, slippageBps: intent.slippageBps });

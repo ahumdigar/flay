@@ -167,3 +167,29 @@ Do not declare MCP complete until an official MCP client successfully initialize
 ### Acceptance-criteria result
 
 All eight acceptance criteria and all nine implementation items pass. Any standards-compatible remote MCP client can use Flay's Streamable HTTP endpoint with a user-created capability. That capability remains an in-process, single-replica, revocable proposal credential, so a deployment invalidates existing credentials and the user must create a new one. It can discover bounded public data and create guardrail-checked Convert, xStocks, and Futures proposals; it cannot approve, sign, submit, fund, transfer, export keys, mutate policy, or move funds. The user's Privy wallet remains the only transaction signer.
+
+## Active plan: Agent Convert route recovery
+
+**Status:** active
+**Date:** 2026-09-28
+**Scope:** make an approved Agent Convert proposal preserve Flay's aggregator behavior when the highest-output venue quotes successfully but cannot build an executable transaction
+
+### Implementation plan
+
+1. Move the server-safe automatic route fallback policy into a reusable helper with an explicit allowlist of venue-local availability/build errors. Never fall through after balance, ownership, signer, semantic-validation, simulation-safety, or transaction-integrity failures.
+2. During Agent Convert review, try each ranked live Jupiter, Raydium, and Orca candidate once until one produces the exact validated transaction. Keep route order unchanged so Flay still selects the best executable route.
+3. When every candidate has a recoverable venue failure, return one bounded retryable error, retain the proposal in the approval queue, and show the attempted venue reasons. A provider's non-retryable security or user-funding failure must still stop immediately.
+4. Add focused tests for successful fallback, exhausted fallback, dangerous-error stopping, venue-attempt bounds, retryable request state, and unchanged single-route behavior.
+5. Run the full build, tests, release and dependency audits; compare this plan with the code; deploy to Railway; and verify the live application remains healthy before marking the fix complete.
+
+### Acceptance criteria
+
+1. If Jupiter cannot build after quoting but Raydium or Orca can, Agent review opens the surviving route's exact transaction instead of failing the proposal.
+2. Each quoted venue is attempted at most once in ranked order, and no fresh unreviewed economic intent is introduced.
+3. Insufficient balance, wallet mismatch, invalid/unsafe provider transaction, and simulation-integrity failures never trigger fallback.
+4. Exhausted provider availability failures leave the request pending and retryable with a bounded useful message.
+5. Manual Convert, MCP submission, policy enforcement, approval, Privy signing, and all existing product tests remain unchanged and passing.
+
+### Completion rule
+
+Do not declare this fix complete until the screenshot's single-provider failure path is covered by a passing fallback test, all acceptance criteria pass, and the verified code is live.
