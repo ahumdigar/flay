@@ -298,8 +298,8 @@ Do not mark this block complete until all ten implementation items and all ten a
 
 ## User-selectable Agent approval mode audit
 
-**Status:** repository implementation verified; production Full access activation pending
-**Date:** 2026-09-28
+**Status:** repository and production signer configuration verified; owner delegation smoke pending
+**Date:** 2026-10-07
 
 ### Plan-to-code comparison
 
@@ -318,4 +318,4 @@ Do not mark this block complete until all ten implementation items and all ten a
 
 Criteria 2 and 4–10 have direct code, test, local production, and deployed-boundary evidence. The implementation paths for criteria 1 and 3 also pass focused tests: a configured user can select either immutable mode, and automatic Convert, xStocks, Futures open, close, and cancel complete without per-action UI approval after delegation.
 
-Production activation for criteria 1 and 3 remains intentionally fail-closed. Railway currently has the Privy app ID and identity verification key, but it does not have `PRIVY_APP_SECRET` or `PRIVY_AUTHORIZATION_PRIVATE_KEY`; live health therefore reports `privyAgentDelegation: false` and the Full access choice remains disabled. The matching P-256 public authorization key must first be registered in the Privy dashboard, and its private key plus the Privy app secret must then be stored as server-only Railway variables. No secret or wallet key should be pasted into this file, Git, browser configuration, or chat. This block must not be relabeled `complete` until live health reports delegated signing ready and one owner-authorized mainnet smoke transaction confirms the configured Privy boundary.
+Production signer configuration for criteria 1 and 3 is now active. On 2026-10-07, the Privy app secret passed a read-only API authentication probe, Railway deployment `70783afb-f8dc-4b99-9d29-c60abd29bb10` completed successfully with both server-only credentials, and live health reported `privyAgentDelegation: true`. No secret or wallet key is stored in this file, Git, or browser configuration. This block remains short of `complete` until the owner grants the one-time wallet delegation in Flay and one owner-authorized mainnet smoke transaction confirms the complete configured Privy boundary.
