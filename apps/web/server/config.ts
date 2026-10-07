@@ -15,6 +15,11 @@ function positiveDecimal(value: string | undefined, fallback: string): string {
   return /^(?:0|[1-9]\d*)(?:\.\d{1,2})?$/.test(candidate) && Number(candidate) > 0 ? candidate : fallback;
 }
 
+function boundedInteger(value: string | undefined, fallback: number, minimum: number, maximum: number): number {
+  const candidate = Number(clean(value));
+  return Number.isInteger(candidate) && candidate >= minimum && candidate <= maximum ? candidate : fallback;
+}
+
 const alchemyPayAllowedFiat = [...new Set((clean(process.env.ALCHEMY_PAY_ALLOWED_FIAT) ?? 'USD,EUR,GBP')
   .split(',')
   .map((value) => value.trim().toUpperCase())
@@ -26,6 +31,9 @@ export const config = {
   host: clean(process.env.HOST) ?? '0.0.0.0',
   rpcUrl,
   fallbackRpcUrl: fallbackRpcUrl === rpcUrl ? undefined : fallbackRpcUrl,
+  rpcMaxRequestsPerSecond: boundedInteger(process.env.SOLANA_RPC_MAX_RPS, 8, 1, 100),
+  rpcMaxConcurrency: boundedInteger(process.env.SOLANA_RPC_MAX_CONCURRENCY, 4, 1, 32),
+  rpcQueueTimeoutMs: boundedInteger(process.env.SOLANA_RPC_QUEUE_TIMEOUT_MS, 10_000, 250, 60_000),
   commitment: 'confirmed' as const,
   privyAppId: clean(process.env.PRIVY_APP_ID) ?? clean(process.env.VITE_PRIVY_APP_ID),
   privyVerificationKey: clean(process.env.PRIVY_VERIFICATION_KEY)?.replace(/\\n/g, '\n'),

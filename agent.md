@@ -319,3 +319,30 @@ Do not mark this block complete until all ten implementation items and all ten a
 Criteria 2 and 4–10 have direct code, test, local production, and deployed-boundary evidence. The implementation paths for criteria 1 and 3 also pass focused tests: a configured user can select either immutable mode, and automatic Convert, xStocks, Futures open, close, and cancel complete without per-action UI approval after delegation.
 
 Production signer configuration for criteria 1 and 3 is now active. On 2026-10-07, the Privy app secret passed a read-only API authentication probe, and Railway deployment `476f2811-415c-400b-b8e2-2201783eb59d` completed successfully with both server-only credentials and the QuickNode Solana mainnet RPC. Live health reports `status: ok`, `privyAgentDelegation: true`, an available blockhash, and a successful v0 simulation probe. No secret or wallet key is stored in this file, Git, or browser configuration. This block remains short of `complete` until the owner grants the one-time wallet delegation in Flay and one owner-authorized mainnet smoke transaction confirms the complete configured Privy boundary.
+
+## QuickNode RPC budget stabilization plan
+
+**Status:** implementation in progress
+**Date:** 2026-10-07
+
+### Incident
+
+The production SOL-to-USDC Convert request returned Railway HTTP 502 while the service repeatedly restarted. Railway logs identified an orphaned Solana web3 rejection from QuickNode: HTTP 429 / JSON-RPC code `-32007`, stating that the endpoint's 15 requests-per-second limit had been reached.
+
+### Implementation plan
+
+1. Add a single FIFO limiter at the Solana web3 HTTP fetch boundary so every primary RPC HTTP request shares the same requests-per-second and concurrency budget, including calls issued inside one higher-level operation.
+2. Keep the default budget below QuickNode's 15 requests-per-second ceiling, make it server-configurable, bound queue wait time, and apply the same protection independently to a configured fallback RPC.
+3. Recognize QuickNode's documented 429 shape as a recoverable orphaned background RPC rejection so a provider throttle cannot terminate the Node process. Unknown unhandled failures must remain fatal.
+4. Add focused tests for the limiter's FIFO rate window, concurrency cap, timeout behavior, and QuickNode rejection classification.
+5. Document the server-only tuning variables, run the complete repository checks and release audit, deploy to Railway, and reproduce the screenshot's exact `0.0005 SOL -> USDC` request against production.
+
+### Acceptance criteria
+
+1. A burst cannot start more primary RPC HTTP requests than the configured one-second budget or exceed the configured concurrency cap.
+2. Queue saturation fails with a bounded, retryable RPC error instead of waiting indefinitely.
+3. A QuickNode `-32007` / request-limit background rejection is contained without weakening the fatal handling of unrelated failures.
+4. The production health probe reports an available blockhash and successful v0 simulation through QuickNode.
+5. The exact screenshot quote request returns HTTP 200 with at least one executable route, and repeated requests do not restart the service.
+
+Do not mark this block complete until the deployed acceptance checks pass and a plan-versus-code audit is recorded below this plan.

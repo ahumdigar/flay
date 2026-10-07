@@ -1,11 +1,21 @@
 import { Connection } from '@solana/web3.js';
 import { config } from './config.js';
 import { AppError } from './errors.js';
+import { createRateLimitedFetch, RpcRequestLimiter } from './rpc-rate-limiter.js';
+
+function limitedFetch() {
+  return createRateLimitedFetch(new RpcRequestLimiter({
+    maxRequestsPerSecond: config.rpcMaxRequestsPerSecond,
+    maxConcurrency: config.rpcMaxConcurrency,
+    queueTimeoutMs: config.rpcQueueTimeoutMs,
+  }));
+}
 
 export const connection = new Connection(config.rpcUrl, {
   commitment: config.commitment,
   confirmTransactionInitialTimeout: 45_000,
   disableRetryOnRateLimit: true,
+  fetch: limitedFetch(),
 });
 
 export const fallbackConnection = config.fallbackRpcUrl
@@ -13,6 +23,7 @@ export const fallbackConnection = config.fallbackRpcUrl
       commitment: config.commitment,
       confirmTransactionInitialTimeout: 45_000,
       disableRetryOnRateLimit: true,
+      fetch: limitedFetch(),
     })
   : null;
 

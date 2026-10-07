@@ -8,6 +8,9 @@ describe('process safety', () => {
   it('contains Solana JSON-RPC rate limits raised by an orphaned provider promise', () => {
     expect(isRecoverableBackgroundRpcRejection(new Error('429: {"jsonrpc":"2.0","error":{"message":"Connection rate limits exceeded"}}'))).toBe(true);
     expect(isRecoverableBackgroundRpcRejection('Solana RPC: 429 Too many requests')).toBe(true);
+    expect(isRecoverableBackgroundRpcRejection(new Error(
+      '429 Too Many Requests: {"code":-32007,"message":"15/second request limit reached - reduce calls per second or upgrade your account at https://dashboard.quicknode.com/billing/plan"}',
+    ))).toBe(true);
   });
 
   it('does not hide unknown unhandled failures', () => {

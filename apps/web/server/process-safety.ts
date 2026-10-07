@@ -2,6 +2,7 @@ const SOLANA_RATE_LIMIT_PATTERNS = [
   /\b429\b/,
   /connection rate limits exceeded/i,
   /too many requests/i,
+  /request limit reached/i,
 ];
 
 let installed = false;
@@ -14,7 +15,7 @@ function rejectionMessage(reason: unknown): string {
 export function isRecoverableBackgroundRpcRejection(reason: unknown): boolean {
   const message = rejectionMessage(reason);
   const rateLimited = SOLANA_RATE_LIMIT_PATTERNS.some((pattern) => pattern.test(message));
-  const identifiesRpc = /jsonrpc|solana rpc|connection rate limits exceeded/i.test(message);
+  const identifiesRpc = /jsonrpc|solana rpc|connection rate limits exceeded|dashboard\.quicknode\.com|"code"\s*:\s*-32007/i.test(message);
   return rateLimited && identifiesRpc;
 }
 
