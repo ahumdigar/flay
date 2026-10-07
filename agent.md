@@ -322,7 +322,7 @@ Production signer configuration for criteria 1 and 3 is now active. On 2026-10-0
 
 ## QuickNode RPC budget stabilization plan
 
-**Status:** implementation in progress
+**Status:** complete
 **Date:** 2026-10-07
 
 ### Incident
@@ -346,3 +346,13 @@ The production SOL-to-USDC Convert request returned Railway HTTP 502 while the s
 5. The exact screenshot quote request returns HTTP 200 with at least one executable route, and repeated requests do not restart the service.
 
 Do not mark this block complete until the deployed acceptance checks pass and a plan-versus-code audit is recorded below this plan.
+
+### Plan-versus-code completion audit
+
+1. **Shared RPC budget — pass.** `server/rpc-rate-limiter.ts` implements one FIFO, evenly spaced HTTP request queue per configured Solana connection. `server/rpc.ts` installs it as the web3 fetch boundary for both primary and fallback connections, so nested and parallel web3 operations share the same primary budget. Defaults are 8 requests/second and 4 concurrent requests, leaving capacity below QuickNode's 15/second starter ceiling.
+2. **Bounded saturation — pass.** Queued work has a configurable 10-second default timeout and rejects with `RpcQueueTimeoutError`; existing `withRpcFallback` handling converts an exhausted primary/fallback path into the established retryable RPC response rather than leaving requests pending indefinitely.
+3. **Process containment — pass.** `process-safety.ts` now identifies QuickNode HTTP 429 / JSON-RPC `-32007` request-limit failures as recoverable only when the rejection also carries RPC-specific evidence. The existing unknown-failure test still proves unrelated unhandled failures remain fatal.
+4. **Tests and documentation — pass.** Focused tests cover FIFO spacing, concurrency, queue timeout, and the exact QuickNode rejection. `.env.example` and the root README document all three server-only tuning variables. `npm run check` passed 53 test files and 325 tests, with 4 files and 8 credential/mainnet-gated tests skipped; `npm run release:audit` and `git diff --check` also passed.
+5. **Production reproduction — pass.** Railway deployment `d2aef202-ceae-4503-915b-2df5fa8a6316` was uploaded from commit `b7910ef` and became healthy. The exact screenshot request (`500000` lamports SOL to USDC at 50 bps) returned HTTP 200 with executable Jupiter, Raydium, and Orca routes. Five subsequent quote-plus-health rounds for `500000` through `540000` lamports each returned quote HTTP 200, three routes, and health HTTP 200. Railway remained online and its post-deployment HTTP logs contained no responses at or above 400 during the verification window.
+
+All five implementation items and all five acceptance criteria are satisfied.
